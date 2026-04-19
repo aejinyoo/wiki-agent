@@ -74,18 +74,22 @@ def _regenerate_personal_context() -> None:
             if len(recent_tried) >= 5:
                 break
 
+    cat_lines = [f"- {name}: {count}" for name, count in top_cats] or ["- (없음)"]
+    tag_lines = [f"- {name}: {count}" for name, count in top_tags] or ["- (없음)"]
+    tried_lines = recent_tried or ["- (없음)"]
+
     md = [
         "# Personal Context",
         f"_자동 생성 · {dt.datetime.utcnow().isoformat(timespec='seconds')}Z_",
         "",
         "## 카테고리 분포 Top 5",
-        *(f"- {name}: {count}" for name, count in top_cats) or ["- (없음)"],
+        *cat_lines,
         "",
         "## 자주 쓰는 태그 Top 10",
-        *(f"- {name}: {count}" for name, count in top_tags) or ["- (없음)"],
+        *tag_lines,
         "",
         "## 최근 tried=true 아이템",
-        *(recent_tried or ["- (없음)"]),
+        *tried_lines,
     ]
     paths.PERSONAL_CONTEXT.write_text("\n".join(md) + "\n", encoding="utf-8")
     log.info("_personal_context.md 갱신")
