@@ -1,0 +1,35 @@
+# 시크릿
+.env
+.env.*
+!.env.example
+
+# 개인 컨텍스트·사용량 (로컬만)
+_personal_context.md
+_usage.json
+
+# 캐시
+.anthropic_cache/
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+.uv/
+*.egg-info/
+dist/
+build/
+
+# 로그
+logs/*.log
+logs/*.err
+
+# 실패 큐
+inbox-failed.md
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 에디터
+.vscode/
+.idea/
+*.swp

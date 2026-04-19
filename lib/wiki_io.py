@@ -1,0 +1,246 @@
+"""위키 파일 IO + 인덱스 incremental 갱신.
+
+기획서 5.8의 "각 에이전트가 자기 쓰기 시점에 인덱스 갱신" 원칙을 따른다.
+- Ingester → `add_raw_stub(item)`
+- Classifier → `upsert_classified(item)`
+- Curator → `recompute_stats()` (주 1회 일괄)
+- Daily Brief → 읽기만
+"""
+
+from __future__ import annotations
+
+import datetime as dt
+import hashlib
+import json
+import logging
+import re
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+
+import frontmatter
+import yaml
+
+from . import paths
+
+log = logging.getLogger(__name__)
+
+
+# ─────────────────────────────────────────────────────────────
+# 기본 데이터 모델
+# ─────────────────────────────────────────────────────────────
+@dataclass
+class WikiItem:
+    id: str
+    url: str
+    source: str                # X | YouTube | Threads | Instagram | Manual
+    captured_at: str           # ISO8601
+    title: str = ""
+    summary_3lines: str = ""
+    tags: list[str] = field(default_factory=list)
+    category: str = ""
+    confidence: float = 0.0
+    tried: bool = False
+    tried_at: str | None = None
+    author: str = ""
+    body: str = ""             # frontmatter 이후 본문
+
+    def to_frontmatter_post(self) -> frontmatter.Post:
+        meta = {
+            "id": self.id,
+            "source": self.source,
+            "url": self.url,
+            "author": self.author,
+            "captured_at": self.captured_at,
+            "title": self.title,
+            "summary_3lines": self.summary_3lines,
+            "tags": list(self.tags),
+            "category": self.category,
+            "confidence": round(self.confidence, 3),
+            "tried": self.tried,
+            "tried_at": self.tried_at,
+        }
+        return frontmatter.Post(self.body or "", **meta)
+
+
+# ─────────────────────────────────────────────────────────────
+# 식별자·슬러그
+# ─────────────────────────────────────────────────────────────
+
+def url_hash(url: str) -> str:
+    """URL 기반 안정적 id."""
+    normalized = url.strip().lower().rstrip("/")
+    return hashlib.sha1(normalized.encode("utf-8")).hexdigest()[:12]
+
+
+def slugify(text: str, fallback: str = "item") -> str:
+    s = re.sub(r"[^\w\s-]", "", text, flags=re.UNICODE).strip().lower()
+    s = re.sub(r"[\s_-]+", "-", s)
+    return s[:60] or fallback
+
+
+def item_filename(item: WikiItem) -> str:
+    date = item.captured_at[:10] if item.captured_at else dt.date.today().isoformat()
+    return f"{date}-{slugify(item.title, item.id)}.md"
+
+
+# ─────────────────────────────────────────────────────────────
+# _meta.yaml
+# ─────────────────────────────────────────────────────────────
+
+def load_meta() -> dict:
+    if not paths.META_YAML.exists():
+        return {}
+    return yaml.safe_load(paths.META_YAML.read_text(encoding="utf-8")) or {}
+
+
+# ─────────────────────────────────────────────────────────────
+# _index.json — incremental
+# ─────────────────────────────────────────────────────────────
+
+def _load_index() -> dict:
+    if not paths.INDEX_JSON.exists():
+        return {"version": 1, "updated_at": None, "items": {}}
+    try:
+        return json.loads(paths.INDEX_JSON.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        log.warning("_index.json 파싱 실패, 새 인덱스로 시작합니다.")
+        return {"version": 1, "updated_at": None, "items": {}}
+
+
+def _save_index(index: dict) -> None:
+    index["updated_at"] = dt.datetime.utcnow().isoformat(timespec="seconds") + "Z"
+    paths.INDEX_JSON.write_text(
+        json.dumps(index, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+
+def index_has(item_id: str) -> bool:
+    return item_id in _load_index().get("items", {})
+
+
+def add_raw_stub(item: WikiItem) -> None:
+    """Ingester가 호출. 최소 메타데이터만 인덱스에 등록."""
+    index = _load_index()
+    index["items"][item.id] = {
+        "url": item.url,
+        "source": item.source,
+        "captured_at": item.captured_at,
+        "status": "raw",
+        "category": None,
+    }
+    _save_index(index)
+
+
+def upsert_classified(item: WikiItem, rel_path: str) -> None:
+    """Classifier가 호출. 분류 완료된 항목을 인덱스에 반영."""
+    index = _load_index()
+    index["items"][item.id] = {
+        "url": item.url,
+        "source": item.source,
+        "captured_at": item.captured_at,
+        "status": "classified",
+        "category": item.category,
+        "tags": list(item.tags),
+        "path": rel_path,
+        "title": item.title,
+    }
+    _save_index(index)
+
+
+# ─────────────────────────────────────────────────────────────
+# _stats.json — Curator가 일괄, rebuild_index도 사용
+# ─────────────────────────────────────────────────────────────
+
+def recompute_stats() -> dict:
+    stats = {
+        "version": 1,
+        "updated_at": dt.datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        "categories": {},
+        "tags": {},
+        "sources": {},
+    }
+    if not paths.WIKI_DIR.exists():
+        paths.STATS_JSON.write_text(
+            json.dumps(stats, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        return stats
+
+    for md in paths.WIKI_DIR.glob("*/*.md"):
+        try:
+            post = frontmatter.loads(md.read_text(encoding="utf-8"))
+        except Exception as e:  # noqa: BLE001
+            log.warning("frontmatter 파싱 실패 %s: %s", md, e)
+            continue
+        cat = post.get("category") or md.parent.name
+        src = post.get("source") or "Manual"
+        tags = post.get("tags") or []
+        stats["categories"][cat] = stats["categories"].get(cat, 0) + 1
+        stats["sources"][src] = stats["sources"].get(src, 0) + 1
+        for t in tags:
+            stats["tags"][t] = stats["tags"].get(t, 0) + 1
+
+    paths.STATS_JSON.write_text(
+        json.dumps(stats, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    return stats
+
+
+# ─────────────────────────────────────────────────────────────
+# 읽기·쓰기 (item = frontmatter.Post)
+# ─────────────────────────────────────────────────────────────
+
+def write_wiki_item(item: WikiItem) -> Path:
+    """wiki/{category}/*.md 저장 + 인덱스 반영. 저장 경로 반환."""
+    cat_dir = paths.wiki_category_dir(item.category)
+    out = cat_dir / item_filename(item)
+    post = item.to_frontmatter_post()
+    out.write_text(frontmatter.dumps(post), encoding="utf-8")
+    rel = out.relative_to(paths.WIKI_REPO).as_posix()
+    upsert_classified(item, rel)
+    return out
+
+
+def read_wiki_item(path: Path) -> frontmatter.Post:
+    return frontmatter.loads(path.read_text(encoding="utf-8"))
+
+
+def iter_wiki_items():
+    """wiki/**/*.md 전수 이터레이터."""
+    for md in paths.WIKI_DIR.glob("*/*.md"):
+        try:
+            yield md, frontmatter.loads(md.read_text(encoding="utf-8"))
+        except Exception as e:  # noqa: BLE001
+            log.warning("frontmatter 파싱 실패 %s: %s", md, e)
+
+
+# ─────────────────────────────────────────────────────────────
+# raw/ 저장
+# ─────────────────────────────────────────────────────────────
+
+def save_raw(item: WikiItem, extracted: dict) -> Path:
+    """Ingester가 원본 추출 결과를 raw/YYYY-MM-DD/<id>.json 으로 저장."""
+    date = item.captured_at[:10] if item.captured_at else dt.date.today().isoformat()
+    day_dir = paths.RAW_DIR / date
+    day_dir.mkdir(parents=True, exist_ok=True)
+    out = day_dir / f"{item.id}.json"
+    payload = {
+        "item": asdict(item),
+        "extracted": extracted,
+    }
+    out.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return out
+
+
+def load_raw(path: Path) -> dict:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def iter_unclassified_raw():
+    """아직 wiki/에 기록되지 않은 raw/*.json 이터."""
+    index = _load_index().get("items", {})
+    for p in sorted(paths.RAW_DIR.glob("*/*.json")):
+        stem = p.stem
+        meta = index.get(stem)
+        if meta and meta.get("status") == "classified":
+            continue
+        yield p

@@ -1,0 +1,110 @@
+name: Nightly Wiki Agent
+
+on:
+  schedule:
+    # KST 07:30 = UTC 22:30 (전날)
+    - cron: '30 22 * * *'
+  workflow_dispatch:     # 수동 실행 버튼
+    inputs:
+      force_curator:
+        description: 'Curator 강제 실행'
+        type: boolean
+        default: false
+      dry_run:
+        description: 'Dry run (파일·이슈 변경 없음)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read         # 자기 repo (wiki-agent) 읽기
+
+concurrency:
+  group: nightly
+  cancel-in-progress: false   # 동시 실행 방지, 실행 중이면 다음은 대기
+
+jobs:
+  nightly:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      WIKI_REPO_TOKEN: ${{ secrets.WIKI_REPO_TOKEN }}
+      GITHUB_WIKI_REPO: ${{ vars.GITHUB_WIKI_REPO || 'aejinyoo/wiki' }}
+      INBOX_LABEL: ${{ vars.INBOX_LABEL || 'inbox' }}
+      MODEL_HAIKU: claude-haiku-4-5-20251001
+      MODEL_SONNET: claude-sonnet-4-6
+      DAILY_TOKEN_CAP_SONNET: '15000'
+      DAILY_TOKEN_CAP_HAIKU: '10000'
+      CLASSIFIER_DAILY_ITEM_CAP: '30'
+      LOG_LEVEL: INFO
+      TZ: Asia/Seoul
+
+    steps:
+      - name: Checkout wiki-agent (code)
+        uses: actions/checkout@v4
+        with:
+          path: wiki-agent
+
+      - name: Checkout wiki (data)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.GITHUB_WIKI_REPO || 'aejinyoo/wiki' }}
+          token: ${{ secrets.WIKI_REPO_TOKEN }}
+          path: wiki
+          fetch-depth: 1
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: 'latest'
+
+      - name: Install dependencies
+        working-directory: wiki-agent
+        run: uv sync
+
+      - name: Set WIKI_REPO_PATH
+        run: echo "WIKI_REPO_PATH=${{ github.workspace }}/wiki" >> $GITHUB_ENV
+
+      - name: Run nightly batch
+        working-directory: wiki-agent
+        env:
+          GITHUB_TOKEN: ${{ secrets.WIKI_REPO_TOKEN }}
+        run: |
+          set -e
+          ARGS=""
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            ARGS="$ARGS --dry-run"
+          fi
+          if [ "${{ inputs.force_curator }}" = "true" ]; then
+            ARGS="$ARGS --force-curator"
+          fi
+          uv run agents/nightly.py $ARGS
+
+      - name: Commit & push wiki changes
+        if: inputs.dry_run != true
+        working-directory: wiki
+        run: |
+          git config user.name "wiki-agent[bot]"
+          git config user.email "wiki-agent@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "변경 없음 — 커밋 스킵"
+          else
+            DATE=$(date +%Y-%m-%d)
+            git commit -m "nightly: ${DATE} 브리프·수집 갱신"
+            git push
+          fi
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-logs
+          path: wiki-agent/logs/
+          retention-days: 7

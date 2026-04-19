@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.aejin.designwiki.nightly</string>
+
+  <!-- ingester → classifier → (조건부) curator → daily_brief 순차 실행 -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>__UV_BIN__</string>
+    <string>run</string>
+    <string>--project</string>
+    <string>__AGENT_HOME__</string>
+    <string>__AGENT_HOME__/agents/nightly.py</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>__AGENT_HOME__</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>AGENT_HOME</key>
+    <string>__AGENT_HOME__</string>
+    <key>PATH</key>
+    <string>__PATH__</string>
+  </dict>
+
+  <!-- 매일 아침 07:30 -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key><integer>7</integer>
+    <key>Minute</key><integer>30</integer>
+  </dict>
+
+  <!-- 맥이 꺼져 있다 깨어날 때 한번 실행 (누락된 브리프 catch-up 발동) -->
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>__AGENT_HOME__/logs/nightly.log</string>
+  <key>StandardErrorPath</key>
+  <string>__AGENT_HOME__/logs/nightly.err</string>
+</dict>
+</plist>
