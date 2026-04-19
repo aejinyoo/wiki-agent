@@ -95,7 +95,7 @@ def _fallback_brief_for(target: dt.date, reason: str) -> str:
     )
 
 
-MAX_CATCHUP_DAYS = 3
+MAX_CATCHUP_DAYS = 0  # 소급 비활성화 (오늘치만 생성)
 
 
 def _generate_one(target: dt.date, dry_run: bool, force: bool) -> bool:
