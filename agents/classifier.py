@@ -18,7 +18,13 @@ _bootstrap.setup(__file__)
 
 from lib import llm as claude, paths  # noqa: E402
 from lib.validate import validate_and_fix  # noqa: E402
-from lib.wiki_io import WikiItem, iter_unclassified_raw, load_raw, write_wiki_item  # noqa: E402
+from lib.wiki_io import (  # noqa: E402
+    WikiItem,
+    archive_raw,
+    iter_unclassified_raw,
+    load_raw,
+    write_wiki_item,
+)
 
 log = logging.getLogger("classifier")
 
@@ -146,6 +152,12 @@ def run(limit: int | None = None, dry_run: bool = False) -> None:
 
         out = write_wiki_item(item)
         log.info("저장: %s", out.relative_to(paths.WIKI_REPO))
+
+        # 분류 성공 → raw 를 raw-archive/YYYY-MM/ 로 이동 (빈 날짜 폴더 정리 포함)
+        archived = archive_raw(raw_path)
+        if archived:
+            log.info("아카이브: %s", archived.relative_to(paths.WIKI_REPO))
+
         processed += 1
 
     log.info("완료: 처리 %d건", processed)

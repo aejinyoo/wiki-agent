@@ -218,11 +218,13 @@ def iter_wiki_items():
 # ─────────────────────────────────────────────────────────────
 
 def save_raw(item: WikiItem, extracted: dict) -> Path:
-    """Ingester가 원본 추출 결과를 raw/YYYY-MM-DD/<id>.json 으로 저장."""
-    date = item.captured_at[:10] if item.captured_at else dt.date.today().isoformat()
-    day_dir = paths.RAW_DIR / date
-    day_dir.mkdir(parents=True, exist_ok=True)
-    out = day_dir / f"{item.id}.json"
+    """Ingester가 원본 추출 결과를 raw/<id>.json (flat) 으로 저장.
+
+    날짜 정보는 payload['item']['captured_at'] 에 이미 담겨 있으므로
+    별도 날짜 폴더를 두지 않습니다. 아카이브 시 captured_at 에서 월 버킷을 계산합니다.
+    """
+    paths.RAW_DIR.mkdir(parents=True, exist_ok=True)
+    out = paths.RAW_DIR / f"{item.id}.json"
     payload = {
         "item": asdict(item),
         "extracted": extracted,
@@ -236,11 +238,96 @@ def load_raw(path: Path) -> dict:
 
 
 def iter_unclassified_raw():
-    """아직 wiki/에 기록되지 않은 raw/*.json 이터."""
+    """아직 wiki/에 기록되지 않은 raw 파일 이터.
+
+    두 구조를 모두 yield (신구 호환):
+      - raw/<id>.json         (현재 flat 구조)
+      - raw/YYYY-MM-DD/<id>.json  (legacy — 처음 마이그레이션 전까지 남아있을 수 있음)
+    """
     index = _load_index().get("items", {})
-    for p in sorted(paths.RAW_DIR.glob("*/*.json")):
+    # 중복 제거용 (같은 id 가 flat·legacy 양쪽에 있으면 안 되지만 안전장치)
+    seen: set[str] = set()
+
+    # 1) flat 구조 — raw/<id>.json
+    for p in sorted(paths.RAW_DIR.glob("*.json")):
         stem = p.stem
+        if stem in seen:
+            continue
+        seen.add(stem)
         meta = index.get(stem)
         if meta and meta.get("status") == "classified":
             continue
         yield p
+
+    # 2) legacy 날짜 폴더 — raw/*/*.json
+    for p in sorted(paths.RAW_DIR.glob("*/*.json")):
+        stem = p.stem
+        if stem in seen:
+            continue
+        seen.add(stem)
+        meta = index.get(stem)
+        if meta and meta.get("status") == "classified":
+            continue
+        yield p
+
+
+# ─────────────────────────────────────────────────────────────
+# raw/ 아카이브 (분류 성공 후 정리)
+# ─────────────────────────────────────────────────────────────
+
+def archive_raw(raw_path: Path) -> Path | None:
+    """분류 성공한 raw 파일을 raw-archive/YYYY-MM/ 로 이동.
+
+    - flat 구조:   raw/<id>.json             → raw-archive/YYYY-MM/<id>.json
+    - legacy 구조: raw/YYYY-MM-DD/<id>.json  → raw-archive/YYYY-MM/<id>.json
+                  (이동 후 빈 날짜 폴더는 제거)
+
+    월(YYYY-MM) 결정 우선순위:
+      1) JSON payload 의 item.captured_at  (정식 메타데이터)
+      2) 부모 폴더 이름 (legacy 구조일 때)
+      3) 오늘 날짜
+    """
+    try:
+        if not raw_path.exists():
+            return None
+
+        # 1) JSON 내부의 captured_at 에서 월을 결정 (정식 소스)
+        month: str | None = None
+        try:
+            data = json.loads(raw_path.read_text(encoding="utf-8"))
+            captured_at = (data.get("item") or {}).get("captured_at") or ""
+            if len(captured_at) >= 7:
+                month = captured_at[:7]
+        except Exception:  # noqa: BLE001
+            pass
+
+        # 2) 폴백: 부모 폴더가 YYYY-MM-DD 형태면 거기서
+        parent = raw_path.parent
+        if month is None and parent != paths.RAW_DIR and len(parent.name) >= 7:
+            month = parent.name[:7]
+
+        # 3) 최후 폴백: 오늘 날짜
+        if month is None:
+            month = dt.date.today().isoformat()[:7]
+
+        dest_dir = paths.RAW_ARCHIVE_DIR / month
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest = dest_dir / raw_path.name
+
+        # 같은 id 가 이미 archive 에 있으면 덮어쓰기 (재분류 시나리오)
+        if dest.exists():
+            dest.unlink()
+        raw_path.rename(dest)
+
+        # legacy: 부모가 raw/ 자체가 아니고 비었으면 날짜 폴더 제거
+        if parent != paths.RAW_DIR:
+            try:
+                if parent.is_dir() and not any(parent.iterdir()):
+                    parent.rmdir()
+            except OSError:
+                pass  # 폴더가 이미 없거나, 다른 프로세스가 쓰고 있으면 무시
+
+        return dest
+    except Exception as e:  # noqa: BLE001
+        log.warning("archive_raw 실패 (%s): %s", raw_path, e)
+        return None

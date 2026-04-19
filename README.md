@@ -58,8 +58,12 @@ wiki-agent/
 
 ## 실행 순서 (nightly.py 내부)
 
-1. **Ingester** — `inbox.md` 새 블록 → `raw/*.json`
+1. **Ingester** — GitHub 이슈(`inbox`) 또는 `inbox.md` → `raw/<id>.json`
+   - 날짜 정보는 JSON 내부 `item.captured_at` 에 이미 들어감 (폴더 구조 대신 메타데이터로 보존)
 2. **Classifier** — 미분류 `raw/` → `wiki/{category}/*.md` (Gemini Flash-Lite, 일 최대 30건)
+   - 분류 성공한 원본은 `raw-archive/YYYY-MM/` 로 자동 이동 (월 단위 묶음)
+   - 실패한 원본은 `raw/` 에 그대로 남아 다음 실행에서 재시도
+   - 과거 `raw/YYYY-MM-DD/*.json` 구조도 자동 인식해서 같이 처리 (호환)
 3. **Curator** — 조건(아이템≥50 AND 마지막 실행 ≥ 7일 전) 충족 시만
 4. **Daily Brief** — 최근 3일 중 누락된 브리프 소급 + 오늘자 생성 (Gemini Pro)
 

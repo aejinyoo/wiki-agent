@@ -33,7 +33,8 @@ WIKI_REPO = Path(_require("WIKI_REPO_PATH")).expanduser().resolve()
 
 WIKI_DIR = WIKI_REPO / "wiki"             # 카테고리 폴더들
 DAILY_DIR = WIKI_REPO / "daily"           # 일일 브리프
-RAW_DIR = WIKI_REPO / "raw"               # 수집 원본
+RAW_DIR = WIKI_REPO / "raw"               # 수집 원본 (미분류만 남음)
+RAW_ARCHIVE_DIR = WIKI_REPO / "raw-archive"  # 분류 완료된 원본 (월별 보존)
 CHANGELOG_DIR = WIKI_REPO / "_changelog"  # Curator 변경 로그
 
 INDEX_JSON = WIKI_REPO / "_index.json"
@@ -95,7 +96,7 @@ LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
 
 def ensure_dirs() -> None:
     """런타임에 없는 디렉토리를 만들어둔다."""
-    for d in (WIKI_DIR, DAILY_DIR, RAW_DIR, CHANGELOG_DIR, LOGS_DIR):
+    for d in (WIKI_DIR, DAILY_DIR, RAW_DIR, RAW_ARCHIVE_DIR, CHANGELOG_DIR, LOGS_DIR):
         d.mkdir(parents=True, exist_ok=True)
 
 
