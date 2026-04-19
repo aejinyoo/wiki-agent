@@ -86,8 +86,8 @@ PROMPTS_DIR = AGENT_HOME / "prompts"
 MODEL_HAIKU = os.environ.get("MODEL_HAIKU", "gemini-2.5-flash-lite")
 MODEL_SONNET = os.environ.get("MODEL_SONNET", "gemini-2.5-pro")
 
-DAILY_TOKEN_CAP_SONNET = int(os.environ.get("DAILY_TOKEN_CAP_SONNET", "15000"))
-DAILY_TOKEN_CAP_HAIKU = int(os.environ.get("DAILY_TOKEN_CAP_HAIKU", "10000"))
+DAILY_TOKEN_CAP_SONNET = int(os.environ.get("DAILY_TOKEN_CAP_SONNET", "25000"))
+DAILY_TOKEN_CAP_HAIKU = int(os.environ.get("DAILY_TOKEN_CAP_HAIKU", "25000"))
 
 CLASSIFIER_DAILY_ITEM_CAP = int(os.environ.get("CLASSIFIER_DAILY_ITEM_CAP", "30"))
 

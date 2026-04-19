@@ -88,7 +88,27 @@ def _parse_classifier_output(text: str) -> dict:
         "summary_3lines": data.get("summary_3lines", ""),
         "confidence": float(data.get("confidence", 0.5)),
         "title": data.get("title", ""),
+        "key_takeaways": data.get("key_takeaways", []) or [],
+        "why_it_matters": data.get("why_it_matters", "") or "",
+        "what_to_try": data.get("what_to_try", "") or "",
+        "body_ko": data.get("body_ko", "") or "",
+        "original_language": data.get("original_language", "") or "",
     }
+
+
+def _compose_body(body_ko: str, original_text: str) -> str:
+    """frontmatter 이후 markdown 본문을 조립.
+
+    - body_ko 있으면 `## 한국어 요지` 섹션 먼저
+    - 원문은 `## 원문 발췌` 로 6000자 cap
+    """
+    parts: list[str] = []
+    if body_ko.strip():
+        parts.append(f"## 한국어 요지\n\n{body_ko.strip()}")
+    excerpt = (original_text or "").strip()[:6000]
+    if excerpt:
+        parts.append(f"## 원문 발췌\n\n{excerpt}")
+    return "\n\n".join(parts)
 
 
 def classify_one(raw_path: Path, system: str) -> WikiItem | None:
@@ -99,7 +119,7 @@ def classify_one(raw_path: Path, system: str) -> WikiItem | None:
     user = _build_user(item_data, extracted)
 
     try:
-        result = claude.call_haiku(system=system, user=user, max_tokens=800)
+        result = claude.call_haiku(system=system, user=user, max_tokens=2000)
     except claude.TokenCapExceeded as e:
         log.warning("토큰 캡: %s", e)
         return None
@@ -117,7 +137,12 @@ def classify_one(raw_path: Path, system: str) -> WikiItem | None:
         tags=parsed["tags"],
         category=parsed["category"],
         confidence=parsed["confidence"],
-        body=(extracted.get("text") or "")[:6000],
+        body=_compose_body(parsed["body_ko"], extracted.get("text") or ""),
+        key_takeaways=parsed["key_takeaways"],
+        why_it_matters=parsed["why_it_matters"],
+        what_to_try=parsed["what_to_try"],
+        body_ko=parsed["body_ko"],
+        original_language=parsed["original_language"],
     )
 
     note = validate_and_fix(item)

@@ -44,6 +44,13 @@ class WikiItem:
     author: str = ""
     body: str = ""             # frontmatter 이후 본문
 
+    # 확장 — docs/pipeline-enhancement-spec.md
+    key_takeaways: list[str] = field(default_factory=list)
+    why_it_matters: str = ""
+    what_to_try: str = ""
+    body_ko: str = ""
+    original_language: str = ""
+
     def to_frontmatter_post(self) -> frontmatter.Post:
         meta = {
             "id": self.id,
@@ -58,6 +65,11 @@ class WikiItem:
             "confidence": round(self.confidence, 3),
             "tried": self.tried,
             "tried_at": self.tried_at,
+            "key_takeaways": list(self.key_takeaways),
+            "why_it_matters": self.why_it_matters,
+            "what_to_try": self.what_to_try,
+            "body_ko": self.body_ko,
+            "original_language": self.original_language,
         }
         return frontmatter.Post(self.body or "", **meta)
 

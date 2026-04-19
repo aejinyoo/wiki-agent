@@ -49,6 +49,8 @@ def _items_for(target: dt.date, max_items: int = 15) -> list[dict]:
             "title": post.get("title", path.stem),
             "category": post.get("category", "-"),
             "summary": post.get("summary_3lines", "") or (post.content[:200] if post.content else ""),
+            "why_it_matters": post.get("why_it_matters", "") or "",
+            "what_to_try": post.get("what_to_try", "") or "",
             "url": post.get("url", ""),
             "tags": post.get("tags", []),
             "captured_at": captured,
@@ -76,9 +78,12 @@ def _build_user_for_date(target: dt.date, items: list[dict], personal_context: s
                 f"   - 카테고리: {it['category']}",
                 f"   - 태그: {', '.join(it['tags'])}",
                 f"   - 요약: {it['summary'][:400]}",
+                f"   - 왜 중요: {it['why_it_matters'][:200]}",
+                f"   - 해볼 것: {it['what_to_try'][:200]}",
                 f"   - URL: {it['url']}",
                 "",
             ])
+
     lines.extend([
         "",
         "위 데이터를 바탕으로 프롬프트의 템플릿 형식에 맞춰 브리프를 생성하세요.",
@@ -118,7 +123,7 @@ def _generate_one(target: dt.date, dry_run: bool, force: bool) -> bool:
     user = _build_user_for_date(target, items, personal_context)
 
     try:
-        result = claude.call_sonnet(system=system, user=user, max_tokens=2500)
+        result = claude.call_sonnet(system=system, user=user, max_tokens=3500)
         content = result.text.strip()
     except claude.TokenCapExceeded as e:
         log.warning("토큰 캡: %s", e)
