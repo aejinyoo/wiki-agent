@@ -1,8 +1,10 @@
-"""Anthropic 클라이언트 래퍼 + 일일 토큰 카운터.
+"""Gemini 클라이언트 래퍼 + 일일 토큰 카운터.
 
-- `call_haiku` / `call_sonnet` 만 기억하면 됨.
+- `call_haiku` (빠르고 저렴한 분류용) / `call_sonnet` (긴 글쓰기·큐레이션용)
+  두 함수만 기억하면 됨. 내부 구현은 Google Gemini 로 돌아가지만,
+  호출부 영향 최소화를 위해 기존 역할명(해이쿠/소네트)을 그대로 유지합니다.
 - 호출 전 `_usage.json` 체크 → 캡 초과 시 `TokenCapExceeded` 예외.
-- 호출 후 usage를 `_usage.json`에 누적 기록.
+- 호출 후 usage를 `_usage.json`에 누적 기록 (버킷 키도 기존 호환).
 """
 
 from __future__ import annotations
@@ -10,10 +12,12 @@ from __future__ import annotations
 import datetime as dt
 import json
 import logging
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from anthropic import Anthropic
+from google import genai
+from google.genai import types as genai_types
 
 from . import paths
 
@@ -33,7 +37,7 @@ class LLMResult:
 
 
 # ─────────────────────────────────────────────────────────────
-# 사용량 카운터 (_usage.json)
+# 사용량 카운터 (_usage.json) — 버킷 키는 기존 호환성 위해 haiku/sonnet 유지
 # ─────────────────────────────────────────────────────────────
 
 def _today_key() -> str:
@@ -78,12 +82,54 @@ def _check_cap(kind: str, cap: int) -> None:
 
 
 # ─────────────────────────────────────────────────────────────
-# 호출
+# Gemini 클라이언트
 # ─────────────────────────────────────────────────────────────
 
-def _client() -> Anthropic:
-    return Anthropic()  # ANTHROPIC_API_KEY 환경변수 자동 사용
+_CLIENT: genai.Client | None = None
 
+
+def _client() -> genai.Client:
+    """Gemini 클라이언트 (lazy init). GEMINI_API_KEY 또는 GOOGLE_API_KEY 사용."""
+    global _CLIENT
+    if _CLIENT is None:
+        api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+        if not api_key:
+            raise RuntimeError(
+                "환경변수 GEMINI_API_KEY (또는 GOOGLE_API_KEY) 가 설정되지 않았습니다. "
+                ".env 또는 GitHub Actions secrets를 확인하세요."
+            )
+        _CLIENT = genai.Client(api_key=api_key)
+    return _CLIENT
+
+
+def _generate(
+    *,
+    model: str,
+    system: str,
+    user: str,
+    max_tokens: int,
+    temperature: float,
+) -> tuple[str, int, int]:
+    """공통 호출 경로. (text, input_tokens, output_tokens) 반환."""
+    resp = _client().models.generate_content(
+        model=model,
+        contents=user,
+        config=genai_types.GenerateContentConfig(
+            system_instruction=system,
+            max_output_tokens=max_tokens,
+            temperature=temperature,
+        ),
+    )
+    text = (resp.text or "").strip()
+    usage = getattr(resp, "usage_metadata", None)
+    input_tokens = int(getattr(usage, "prompt_token_count", 0) or 0) if usage else 0
+    output_tokens = int(getattr(usage, "candidates_token_count", 0) or 0) if usage else 0
+    return text, input_tokens, output_tokens
+
+
+# ─────────────────────────────────────────────────────────────
+# 공개 API (역할 기반 이름 — 기존 호출부 그대로 호환)
+# ─────────────────────────────────────────────────────────────
 
 def call_haiku(
     *,
@@ -92,22 +138,20 @@ def call_haiku(
     max_tokens: int = 1024,
     temperature: float = 0.2,
 ) -> LLMResult:
+    """빠르고 저렴한 분류용 모델 (Classifier). 기본값: gemini-2.5-flash-lite."""
     _check_cap("haiku", paths.DAILY_TOKEN_CAP_HAIKU)
-    resp = _client().messages.create(
+    text, input_tokens, output_tokens = _generate(
         model=paths.MODEL_HAIKU,
+        system=system,
+        user=user,
         max_tokens=max_tokens,
         temperature=temperature,
-        system=system,
-        messages=[{"role": "user", "content": user}],
     )
-    text = "".join(
-        block.text for block in resp.content if getattr(block, "type", None) == "text"
-    )
-    _record_usage("haiku", resp.usage.input_tokens, resp.usage.output_tokens)
+    _record_usage("haiku", input_tokens, output_tokens)
     return LLMResult(
         text=text,
-        input_tokens=resp.usage.input_tokens,
-        output_tokens=resp.usage.output_tokens,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
         model=paths.MODEL_HAIKU,
     )
 
@@ -119,21 +163,19 @@ def call_sonnet(
     max_tokens: int = 4096,
     temperature: float = 0.3,
 ) -> LLMResult:
+    """긴 글쓰기·큐레이션용 모델 (Daily Brief / Curator). 기본값: gemini-2.5-pro."""
     _check_cap("sonnet", paths.DAILY_TOKEN_CAP_SONNET)
-    resp = _client().messages.create(
+    text, input_tokens, output_tokens = _generate(
         model=paths.MODEL_SONNET,
+        system=system,
+        user=user,
         max_tokens=max_tokens,
         temperature=temperature,
-        system=system,
-        messages=[{"role": "user", "content": user}],
     )
-    text = "".join(
-        block.text for block in resp.content if getattr(block, "type", None) == "text"
-    )
-    _record_usage("sonnet", resp.usage.input_tokens, resp.usage.output_tokens)
+    _record_usage("sonnet", input_tokens, output_tokens)
     return LLMResult(
         text=text,
-        input_tokens=resp.usage.input_tokens,
-        output_tokens=resp.usage.output_tokens,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
         model=paths.MODEL_SONNET,
     )

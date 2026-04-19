@@ -8,7 +8,7 @@ _personal_context.md
 _usage.json
 
 # 캐시
-.anthropic_cache/
+.gemini_cache/
 __pycache__/
 *.pyc
 *.pyo

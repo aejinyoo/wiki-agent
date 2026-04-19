@@ -1,6 +1,6 @@
 # design-wiki-agent
 
-AI 디자인 개인 위키 에이전트. `wiki` repo를 대상으로 Ingester·Classifier·Curator·Daily Brief 4개 에이전트를 돌린다.
+AI 디자인 개인 위키 에이전트. `wiki` repo를 대상으로 Ingester·Classifier·Curator·Daily Brief 4개 에이전트를 돌린다. **LLM은 Google Gemini 사용** (Flash-Lite + Pro, 무료 tier 안에서 동작).
 
 - **기획서**: [aejinyoo/wiki · design-wiki-agent-plan.md](https://github.com/aejinyoo/wiki/blob/master/design-wiki-agent-plan.md)
 - **대상 저장소**: [aejinyoo/wiki](https://github.com/aejinyoo/wiki)
@@ -49,7 +49,7 @@ wiki-agent/
 ├─ prompts/
 ├─ lib/
 │  ├─ paths.py
-│  ├─ claude.py              # Anthropic 래퍼 + 사용량 카운터
+│  ├─ llm.py                 # Gemini 래퍼 + 사용량 카운터
 │  ├─ wiki_io.py             # frontmatter·인덱스 IO
 │  └─ validate.py            # "validate & auto-fix"
 ├─ launchd/                  # macOS plist (nightly 1개)
@@ -59,9 +59,9 @@ wiki-agent/
 ## 실행 순서 (nightly.py 내부)
 
 1. **Ingester** — `inbox.md` 새 블록 → `raw/*.json`
-2. **Classifier** — 미분류 `raw/` → `wiki/{category}/*.md` (Haiku, 일 최대 30건)
+2. **Classifier** — 미분류 `raw/` → `wiki/{category}/*.md` (Gemini Flash-Lite, 일 최대 30건)
 3. **Curator** — 조건(아이템≥50 AND 마지막 실행 ≥ 7일 전) 충족 시만
-4. **Daily Brief** — 최근 3일 중 누락된 브리프 소급 + 오늘자 생성
+4. **Daily Brief** — 최근 3일 중 누락된 브리프 소급 + 오늘자 생성 (Gemini Pro)
 
 각 단계는 실패해도 다음 단계가 계속 실행됩니다.
 
@@ -76,7 +76,16 @@ aejinyoo/wiki-agent  ← 이 repo (에이전트 코드)
 
 **wiki repo에 `inbox` 라벨 생성**: Issues 탭 → Labels → New label → name: `inbox`.
 
-### 2) PAT 발급 + Actions Secret 등록
+### 2) Gemini API 키 발급 + PAT + Actions Secret 등록
+
+**2-1) Gemini API 키 발급**
+
+1. https://aistudio.google.com/apikey 접속 (구글 계정 로그인)
+2. **Create API key** 클릭 → 프로젝트 선택(없으면 자동 생성)
+3. `AIza…` 로 시작하는 키 복사
+4. 무료 tier 한도: Flash-Lite·Pro 모두 하루 수백만 토큰 수준 — 이 프로젝트 상한(25k/일) 대비 압도적으로 여유 있음
+
+**2-2) GitHub PAT 발급 (wiki repo 접근용)**
 
 1. GitHub → Settings → Developer settings → **Personal access tokens** → **Fine-grained tokens** → Generate new token
 2. 권한:
@@ -87,10 +96,14 @@ aejinyoo/wiki-agent  ← 이 repo (에이전트 코드)
      - **Issues**: Read and write
    - Expiration: 90일 (기한 오면 갱신 필요)
 3. 발급된 토큰 복사
-4. `aejinyoo/wiki-agent` → Settings → Secrets and variables → Actions → **New repository secret**:
-   - `ANTHROPIC_API_KEY` = 개인 Anthropic 키
-   - `WIKI_REPO_TOKEN`   = 위 PAT
-5. Variables (선택, 기본값 있으면 생략 가능):
+
+**2-3) Actions Secrets 등록**
+
+`aejinyoo/wiki-agent` → Settings → Secrets and variables → Actions → **New repository secret**:
+   - `GEMINI_API_KEY`   = 위 2-1)에서 발급한 Gemini 키
+   - `WIKI_REPO_TOKEN`  = 위 2-2)에서 만든 PAT
+
+Variables (선택, 기본값 있으면 생략 가능):
    - `GITHUB_WIKI_REPO`  = `aejinyoo/wiki`
    - `INBOX_LABEL`       = `inbox`
 
@@ -110,7 +123,7 @@ Actions 탭에서 "Nightly Wiki Agent" 확인.
 ```bash
 cp .env.example .env
 chmod 600 .env
-# .env 에 ANTHROPIC_API_KEY, WIKI_REPO_PATH, WIKI_REPO_TOKEN 채우기
+# .env 에 GEMINI_API_KEY, WIKI_REPO_PATH, WIKI_REPO_TOKEN 채우기
 
 uv sync
 uv run agents/ingester.py --dry-run

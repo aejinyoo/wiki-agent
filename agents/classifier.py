@@ -16,7 +16,7 @@ import _bootstrap
 
 _bootstrap.setup(__file__)
 
-from lib import claude, paths  # noqa: E402
+from lib import llm as claude, paths  # noqa: E402
 from lib.validate import validate_and_fix  # noqa: E402
 from lib.wiki_io import WikiItem, iter_unclassified_raw, load_raw, write_wiki_item  # noqa: E402
 

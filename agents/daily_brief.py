@@ -15,7 +15,7 @@ import _bootstrap
 
 _bootstrap.setup(__file__)
 
-from lib import claude, paths  # noqa: E402
+from lib import llm as claude, paths  # noqa: E402
 from lib.wiki_io import iter_wiki_items  # noqa: E402
 
 log = logging.getLogger("daily_brief")

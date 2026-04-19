@@ -79,8 +79,11 @@ PROMPTS_DIR = AGENT_HOME / "prompts"
 # ─────────────────────────────────────────────────────────────
 # 모델·가드레일
 # ─────────────────────────────────────────────────────────────
-MODEL_HAIKU = os.environ.get("MODEL_HAIKU", "claude-haiku-4-5-20251001")
-MODEL_SONNET = os.environ.get("MODEL_SONNET", "claude-sonnet-4-6")
+# 역할 기반 이름 유지 (내부 구현은 Gemini):
+#   MODEL_HAIKU  = 빠르고 저렴한 분류용  → 기본값 gemini-2.5-flash-lite
+#   MODEL_SONNET = 긴 글쓰기·큐레이션용 → 기본값 gemini-2.5-pro
+MODEL_HAIKU = os.environ.get("MODEL_HAIKU", "gemini-2.5-flash-lite")
+MODEL_SONNET = os.environ.get("MODEL_SONNET", "gemini-2.5-pro")
 
 DAILY_TOKEN_CAP_SONNET = int(os.environ.get("DAILY_TOKEN_CAP_SONNET", "15000"))
 DAILY_TOKEN_CAP_HAIKU = int(os.environ.get("DAILY_TOKEN_CAP_HAIKU", "10000"))
