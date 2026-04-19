@@ -135,15 +135,17 @@ def run(limit: int | None = None, dry_run: bool = False) -> None:
             break
 
         log.info("분류 중: %s", raw_path.name)
+        if dry_run:
+            log.info("[dry-run] Haiku 호출 스킵: %s", raw_path.name)
+            processed += 1
+            continue
+
         item = classify_one(raw_path, system)
         if item is None:
             break  # 토큰 캡 초과
 
-        if dry_run:
-            log.info("[dry-run] %s → category=%s tags=%s", item.id, item.category, item.tags)
-        else:
-            out = write_wiki_item(item)
-            log.info("저장: %s", out.relative_to(paths.WIKI_REPO))
+        out = write_wiki_item(item)
+        log.info("저장: %s", out.relative_to(paths.WIKI_REPO))
         processed += 1
 
     log.info("완료: 처리 %d건", processed)

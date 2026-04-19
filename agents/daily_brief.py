@@ -108,6 +108,11 @@ def _generate_one(target: dt.date, dry_run: bool, force: bool) -> bool:
     items = _items_for(target)
     log.info("[%s] 어제~그제 아이템 %d건", target.isoformat(), len(items))
 
+    if dry_run:
+        print(f"\n===== {target.isoformat()} =====")
+        print(f"[dry-run] Sonnet 호출 스킵 · items={len(items)}건 · out={out_path.name}")
+        return True
+
     personal_context = _load_personal_context()
     system = _load_prompt()
     user = _build_user_for_date(target, items, personal_context)
@@ -121,11 +126,6 @@ def _generate_one(target: dt.date, dry_run: bool, force: bool) -> bool:
     except Exception as e:  # noqa: BLE001
         log.exception("브리프 생성 실패")
         content = _fallback_brief_for(target, str(e))
-
-    if dry_run:
-        print(f"\n===== {target.isoformat()} =====")
-        print(content)
-        return True
 
     out_path.write_text(content + "\n", encoding="utf-8")
     log.info("브리프 저장: %s", out_path)
