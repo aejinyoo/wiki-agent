@@ -130,6 +130,15 @@ def index_has(item_id: str) -> bool:
     return item_id in _load_index().get("items", {})
 
 
+def remove_from_index(item_id: str) -> dict | None:
+    """인덱스에서 항목 제거. 기존 엔트리를 반환, 없었으면 None."""
+    index = _load_index()
+    entry = index.get("items", {}).pop(item_id, None)
+    if entry is not None:
+        _save_index(index)
+    return entry
+
+
 def add_raw_stub(item: WikiItem) -> None:
     """Ingester가 호출. 최소 메타데이터만 인덱스에 등록."""
     index = _load_index()
