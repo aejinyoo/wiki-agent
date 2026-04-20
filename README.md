@@ -7,6 +7,18 @@ AI 디자인 개인 위키 에이전트. `wiki` repo를 대상으로 Ingester·C
 - **실행 환경**: **GitHub Actions** (cron), 기기가 꺼져 있어도 매일 작동
 - **스케줄**: 매일 07:30 KST (UTC 22:30, 전날)
 
+## 레포 구성
+
+이 프로젝트는 3개 레포로 구성됩니다.
+
+| 레포 | 역할 | 산출물 |
+|---|---|---|
+| [aejinyoo/wiki](https://github.com/aejinyoo/wiki) | 처리된 문서 산출물 저장소 (데이터 레이어) | `wiki/*.md`, `daily/*.md`, `raw/*.json`, 인덱스 |
+| **aejinyoo/wiki-agent** (이 레포) | 수집·분류·큐레이션 로직 (로직 레이어) | Python 에이전트 코드, GitHub Actions 워크플로우 |
+| [aejinyoo/wiki-site](https://github.com/aejinyoo/wiki-site) | 위키 결과물·데일리 브리프 웹사이트 (뷰 레이어) | Astro 기반 정적 사이트 |
+
+데이터 흐름: **iOS Shortcut → wiki (Issues) → wiki-agent (Actions cron) → wiki (files commit) → wiki-site (submodule 빌드)**
+
 ## 아키텍처
 
 ```
