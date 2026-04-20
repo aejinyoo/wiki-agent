@@ -14,6 +14,7 @@ import hashlib
 import json
 import logging
 import re
+import urllib.parse
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -78,10 +79,66 @@ class WikiItem:
 # 식별자·슬러그
 # ─────────────────────────────────────────────────────────────
 
+# SNS/광고 추적 파라미터 — 같은 글이 공유 경로 따라 다른 해시로 저장되는 문제 방지
+_TRACKING_PARAMS = frozenset({
+    # Instagram
+    "igsh", "igshid",
+    # YouTube
+    "si", "feature",
+    # X/Twitter
+    "s", "t", "ref_src", "ref_url",
+    # 공통 UTM / 광고
+    "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
+    "fbclid", "gclid",
+})
+
+
+def _normalize_url(url: str) -> str:
+    """url_hash 용 canonical 형태.
+
+    - 호스트 lowercase
+    - 쿼리에서 _TRACKING_PARAMS 제거 + 남은 키 알파벳 정렬
+    - fragment(#) 제거
+    - path trailing slash 제거
+    - path 대소문자는 보존 (IG/YouTube shortcode 는 case-sensitive)
+    """
+    parts = urllib.parse.urlsplit(url.strip())
+    kept = [
+        (k, v)
+        for k, v in urllib.parse.parse_qsl(parts.query, keep_blank_values=True)
+        if k.lower() not in _TRACKING_PARAMS
+    ]
+    kept.sort()
+    return urllib.parse.urlunsplit(
+        (
+            parts.scheme.lower(),
+            parts.netloc.lower(),
+            parts.path.rstrip("/"),
+            urllib.parse.urlencode(kept, doseq=True),
+            "",  # fragment 제거
+        )
+    )
+
+
 def url_hash(url: str) -> str:
-    """URL 기반 안정적 id."""
+    """URL 기반 안정적 id — 추적 파라미터·fragment 등 정규화 후 sha1 앞 12자리."""
+    return hashlib.sha1(_normalize_url(url).encode("utf-8")).hexdigest()[:12]
+
+
+def url_hash_legacy(url: str) -> str:
+    """v1 해시 로직. 과도기 중복/재시도 식별용으로만 사용.
+
+    변경 금지 — 기존 인덱스/파일명은 이 해시 기반이라 바꾸면 중복 탐지가 깨진다.
+    """
     normalized = url.strip().lower().rstrip("/")
     return hashlib.sha1(normalized.encode("utf-8")).hexdigest()[:12]
+
+
+def url_hashes(url: str) -> list[str]:
+    """신규 + legacy 해시 (중복 제거). 과도기 호환용 이터 소스."""
+    h_new = url_hash(url)
+    h_old = url_hash_legacy(url)
+    return [h_new] if h_new == h_old else [h_new, h_old]
 
 
 def slugify(text: str, fallback: str = "item") -> str:
@@ -128,6 +185,12 @@ def _save_index(index: dict) -> None:
 
 def index_has(item_id: str) -> bool:
     return item_id in _load_index().get("items", {})
+
+
+def index_has_url(url: str) -> bool:
+    """URL 로 인덱스 중복 체크. 신규 해시와 legacy 해시 둘 다 검사."""
+    items = _load_index().get("items", {})
+    return any(h in items for h in url_hashes(url))
 
 
 def remove_from_index(item_id: str) -> dict | None:

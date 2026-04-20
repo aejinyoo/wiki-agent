@@ -69,37 +69,47 @@ def _find_wiki_files(item_id: str, index_entry: dict | None) -> list[Path]:
 
 
 def run(url: str, delete_only: bool) -> int:
-    item_id = wiki_io.url_hash(url)
-    log.info("대상 URL: %s (id=%s)", url, item_id)
-
-    entry = wiki_io.remove_from_index(item_id)
-    if entry is None:
-        log.info("인덱스에 엔트리 없음 — 파일만 정리합니다.")
-    else:
-        log.info(
-            "인덱스 제거: status=%s, category=%s",
-            entry.get("status"),
-            entry.get("category"),
-        )
+    # 과도기 호환: 정규화 해시 + legacy 해시 둘 다 훑는다.
+    candidate_ids = wiki_io.url_hashes(url)
+    log.info("대상 URL: %s (id 후보=%s)", url, candidate_ids)
 
     deleted: list[Path] = []
-    for p in _find_raw_files(item_id):
-        if _delete_file(p):
-            deleted.append(p)
-    for p in _find_archive_files(item_id):
-        if _delete_file(p):
-            deleted.append(p)
-    for p in _find_wiki_files(item_id, entry):
-        if _delete_file(p):
-            deleted.append(p)
+    found_entries: list[tuple[str, dict]] = []
+
+    for cid in candidate_ids:
+        entry = wiki_io.remove_from_index(cid)
+        if entry is not None:
+            found_entries.append((cid, entry))
+            log.info(
+                "인덱스 제거: id=%s status=%s category=%s",
+                cid,
+                entry.get("status"),
+                entry.get("category"),
+            )
+        for p in _find_raw_files(cid):
+            if _delete_file(p):
+                deleted.append(p)
+        for p in _find_archive_files(cid):
+            if _delete_file(p):
+                deleted.append(p)
+        for p in _find_wiki_files(cid, entry):
+            if _delete_file(p):
+                deleted.append(p)
+
+    if not found_entries:
+        log.info("인덱스에 엔트리 없음 — 파일만 정리했습니다.")
 
     wiki_io.recompute_stats()
     log.info("_stats.json 재계산 완료.")
 
     mode = "삭제 전용" if delete_only else "재시도"
-    print(f"\n[{mode}] id={item_id}")
+    print(f"\n[{mode}] id 후보={candidate_ids}")
     print(f"  URL: {url}")
-    print(f"  index entry: {entry if entry else '(없음)'}")
+    if found_entries:
+        for cid, entry in found_entries:
+            print(f"  index entry (id={cid}): {entry}")
+    else:
+        print("  index entry: (없음)")
     if deleted:
         print(f"  삭제한 파일 {len(deleted)}개:")
         for p in deleted:

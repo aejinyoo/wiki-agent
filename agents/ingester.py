@@ -20,7 +20,13 @@ import _bootstrap
 _bootstrap.setup(__file__)
 
 from lib import paths  # noqa: E402
-from lib.wiki_io import WikiItem, index_has, save_raw, add_raw_stub, url_hash  # noqa: E402
+from lib.wiki_io import (  # noqa: E402
+    WikiItem,
+    add_raw_stub,
+    index_has_url,
+    save_raw,
+    url_hash,
+)
 from lib.validate import _infer_source  # noqa: E402
 from lib import github_inbox  # noqa: E402
 from lib import fetchers  # noqa: E402
@@ -106,7 +112,7 @@ def _run_issues_mode(dry_run: bool) -> None:
             continue
 
         item_id = url_hash(url)
-        if index_has(item_id):
+        if index_has_url(url):
             log.info("중복 건너뜀 #%d id=%s", issue.number, item_id)
             if not dry_run:
                 github_inbox.close_issue(issue.number, "⏭ 이미 위키에 존재 — 건너뜀")
@@ -168,7 +174,7 @@ def _run_file_mode(dry_run: bool) -> None:
             continue
 
         item_id = url_hash(url)
-        if index_has(item_id):
+        if index_has_url(url):
             log.info("중복 건너뜀 id=%s url=%s", item_id, url)
             processed_raws.append(b["_raw"])
             continue
