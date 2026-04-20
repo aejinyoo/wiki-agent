@@ -23,6 +23,7 @@ from lib import paths  # noqa: E402
 from lib.wiki_io import WikiItem, index_has, save_raw, add_raw_stub, url_hash  # noqa: E402
 from lib.validate import _infer_source  # noqa: E402
 from lib import github_inbox  # noqa: E402
+from lib import fetchers  # noqa: E402
 
 log = logging.getLogger("ingester")
 
@@ -52,52 +53,23 @@ def parse_inbox_blocks(text: str) -> list[dict]:
 
 
 # ─────────────────────────────────────────────────────────────
-# URL별 본문 추출 (가볍게 — 실제 구현은 W2에서 보강)
+# URL별 본문 추출 — lib/fetchers 로 분리됨
 # ─────────────────────────────────────────────────────────────
 def extract_content(url: str, source: str) -> dict:
-    """URL 종류에 따라 본문·메타 추출.
+    """fetchers.dispatch 호출 후 기존 dict shape 으로 변환.
 
-    v1 스텁: HTTP로 HTML 받아서 readability/trafilatura로 본문만 뽑는다.
-    YouTube는 yt-dlp로 자막, X는 우회 스크래핑(W2에서 보강).
+    status 기반 분기는 Task 5에서 도입. 지금은 기존 {title, text, error, ...} 형태를
+    그대로 유지해서 호출부를 깨지 않는다.
     """
-    try:
-        if source == "YouTube":
-            return _extract_youtube(url)
-        return _extract_generic(url)
-    except Exception as e:  # noqa: BLE001
-        log.warning("본문 추출 실패 url=%s err=%s", url, e)
-        return {"title": "", "text": "", "error": str(e)}
-
-
-def _extract_generic(url: str) -> dict:
-    import requests
-    import trafilatura
-
-    r = requests.get(url, timeout=15, headers={"User-Agent": "Mozilla/5.0 (wiki-agent)"})
-    r.raise_for_status()
-    html = r.text
-    extracted = trafilatura.extract(html, include_comments=False, include_tables=False) or ""
-    title = ""
-    m = re.search(r"<title[^>]*>(.*?)</title>", html, re.IGNORECASE | re.DOTALL)
-    if m:
-        title = re.sub(r"\s+", " ", m.group(1)).strip()
-    return {"title": title, "text": extracted[:20000], "html_len": len(html)}
-
-
-def _extract_youtube(url: str) -> dict:
-    try:
-        import yt_dlp  # type: ignore
-    except ImportError:
-        return {"title": "", "text": "", "error": "yt-dlp 미설치"}
-    opts = {"quiet": True, "skip_download": True, "writesubtitles": False}
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        info = ydl.extract_info(url, download=False)
-    return {
-        "title": info.get("title", ""),
-        "text": info.get("description", "")[:20000],
-        "channel": info.get("channel"),
-        "duration": info.get("duration"),
+    result = fetchers.dispatch(url, source)
+    out: dict = {
+        "title": result.title,
+        "text": result.text,
+        **result.metadata,
     }
+    if result.error:
+        out["error"] = result.error
+    return out
 
 
 # ─────────────────────────────────────────────────────────────
