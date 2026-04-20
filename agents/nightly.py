@@ -6,6 +6,7 @@ launchd 매일 07:30. 순차적으로:
   2) Classifier — raw/ → wiki/{category}/*.md
   3) Curator    — 조건 맞으면 (아이템≥50, 마지막 실행 ≥7일 전) 자동 실행
   4) Daily Brief — 오늘 브리프 + 누락 catch-up
+  5) Cleanup    — 조건 맞으면 (마지막 실행 ≥30일 전) raw-archive 만료 파일 정리
 
 각 단계는 실패해도 다음 단계가 돌 수 있도록 예외 격리.
 """
@@ -33,8 +34,18 @@ def _step(name: str, fn, **kwargs) -> None:
         log.exception("── [%s] 실패 — 다음 단계 계속 진행", name)
 
 
-def run(dry_run: bool = False, force_curator: bool = False) -> None:
-    from agents import ingester, classifier, curator, daily_brief  # noqa: WPS433
+def run(
+    dry_run: bool = False,
+    force_curator: bool = False,
+    force_cleanup: bool = False,
+) -> None:
+    from agents import (  # noqa: WPS433
+        ingester,
+        classifier,
+        curator,
+        daily_brief,
+        cleanup,
+    )
 
     _step("ingester", ingester.run, dry_run=dry_run)
     _step("classifier", classifier.run, dry_run=dry_run)
@@ -46,14 +57,25 @@ def run(dry_run: bool = False, force_curator: bool = False) -> None:
 
     _step("daily_brief", daily_brief.run, dry_run=dry_run, catchup=True)
 
+    if cleanup.is_due(force=force_cleanup):
+        _step("cleanup", cleanup.run, dry_run=dry_run, force=force_cleanup)
+    else:
+        log.info("── [cleanup] 조건 불충족, 스킵 (30일 주기)")
+
 
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--force-curator", action="store_true",
                     help="Curator를 조건 무관하게 강제 실행")
+    ap.add_argument("--force-cleanup", action="store_true",
+                    help="Cleanup을 30일 주기 무관하게 강제 실행")
     args = ap.parse_args()
-    run(dry_run=args.dry_run, force_curator=args.force_curator)
+    run(
+        dry_run=args.dry_run,
+        force_curator=args.force_curator,
+        force_cleanup=args.force_cleanup,
+    )
 
 
 if __name__ == "__main__":
