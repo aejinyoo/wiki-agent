@@ -24,6 +24,9 @@ JSON으로만 응답합니다.
 
 - 애매하면 `trend-reports`
 - 새 카테고리 제안 금지 (Curator 담당)
+- 본문이 "Instagram 원본 확인 필요"로 시작하면 로그인 월로 본문 확보 실패한
+  케이스임. 카테고리는 `trend-reports`(기본)로 보내고, tags 에 `instagram` 만
+  덧붙여 둘 것. 없는 정보를 추정하지 말고 confidence 0.3 이하로 내릴 것.
 
 # 태그 규칙
 
