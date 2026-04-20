@@ -202,6 +202,12 @@ def remove_from_index(item_id: str) -> dict | None:
     return entry
 
 
+def list_index_by_source(source: str) -> list[tuple[str, dict]]:
+    """source 에 해당하는 인덱스 항목 스냅샷: [(item_id, entry), ...]."""
+    items = _load_index().get("items", {})
+    return [(iid, entry) for iid, entry in items.items() if entry.get("source") == source]
+
+
 def add_raw_stub(item: WikiItem) -> None:
     """Ingester가 호출. 최소 메타데이터만 인덱스에 등록."""
     index = _load_index()
