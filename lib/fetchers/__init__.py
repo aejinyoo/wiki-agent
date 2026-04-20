@@ -8,13 +8,14 @@ from __future__ import annotations
 
 import logging
 
-from . import generic, youtube
+from . import generic, x, youtube
 from .base import FetchResult
 
 log = logging.getLogger(__name__)
 
 _DISPATCH = {
     "YouTube": youtube.fetch,
+    "X": x.fetch,
 }
 
 
