@@ -20,6 +20,36 @@
 - 업데이트: 2026-04-21
 - 다음: iOS Shortcut에서 `Get Clipboard` 이슈 body 동봉(사용자) → 다음 cron에서 `user_caption` 실데이터 검증 → Task 2 (YouTube 자막 고도화)
 
+## 다음 예정 (착수 전)
+
+> sns-fetchers 마무리 후 아래 순서대로. 각 항목 상세는 feature 문서 참조.
+> 착수 순서: `sns-fetchers(Task 2) → list-thumbnails+md-images 병합 → demo-repo → map-url-sharing`
+
+### list-thumbnails (+ md-images 병합 구현)
+- 파일: `docs/features/list-thumbnails.md`, `docs/features/md-images.md`
+- 상태: 계획 (정책 확정)
+- 업데이트: 2026-04-21
+- 다음: T1 `lib/fetchers/og.py` OG 추출 util 공용화 (IG `_try_parse_og` 이식)
+- 예상 소요: **6~9h (≈ 1 day)** — 한 브랜치에서 썸네일 + 본문 인라인 같이
+- 확정 원칙: 이미지는 원격 URL 직접 참조만 (바이너리 저장 X) · aspect-ratio 16/9 고정 · LLM 경로 격리 (토큰 증분 0) · 로드 실패 = CSS fallback 아이콘
+- 소스별 정책: generic 만 `body_images` 수집, IG/X/YouTube/Map 은 썸네일 1장만
+
+### demo-repo
+- 파일: `docs/features/demo-repo.md`
+- 상태: 계획
+- 업데이트: 2026-04-21
+- 다음: 위 썸네일·인라인 완료 후 착수 — D1 데모화 체크리스트 (secret/하드코딩 값 식별)
+- 예상 소요: **8.5~13h (≈ 1.5~2 day)**
+- 선행: `sns-fetchers` Task 2 + list-thumbnails 병합 (공유 시점에 썸네일 붙은 상태가 첫인상 유리)
+
+### map-url-sharing
+- 파일: `docs/features/map-url-sharing.md`
+- 상태: 계획
+- 업데이트: 2026-04-21
+- 다음: M1 naver/google maps URL 패턴·응답 구조 조사
+- 예상 소요: **5.5~8h (≈ 1 day)**
+- 비고: 실사용 독립적이라 위 순서와 무관하게 끼워넣기 가능
+
 ## 최근 완료
 
 <!--
