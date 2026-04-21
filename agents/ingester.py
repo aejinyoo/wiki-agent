@@ -28,6 +28,7 @@ from lib.wiki_io import (  # noqa: E402
     url_hash,
 )
 from lib.validate import _infer_source  # noqa: E402
+from lib.user_caption import validate_user_caption  # noqa: E402
 from lib import github_inbox  # noqa: E402
 from lib import fetchers  # noqa: E402
 
@@ -122,6 +123,9 @@ def _run_issues_mode(dry_run: bool) -> None:
         captured_at = issue.created_at
 
         extracted = extract_content(url, source)
+        caption = validate_user_caption(issue.user_caption)
+        if caption:
+            extracted["user_caption"] = caption
         item = WikiItem(
             id=item_id,
             url=url,
@@ -192,6 +196,9 @@ def _run_file_mode(dry_run: bool) -> None:
         )
 
         extracted = extract_content(url, source)
+        caption = validate_user_caption(b.get("user_caption"))
+        if caption:
+            extracted["user_caption"] = caption
         item = WikiItem(
             id=item_id,
             url=url,

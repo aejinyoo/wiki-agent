@@ -25,8 +25,31 @@ JSON으로만 응답합니다.
 - 애매하면 `trend-reports`
 - 새 카테고리 제안 금지 (Curator 담당)
 - 본문이 "Instagram 원본 확인 필요"로 시작하면 로그인 월로 본문 확보 실패한
-  케이스임. 카테고리는 `trend-reports`(기본)로 보내고, tags 에 `instagram` 만
-  덧붙여 둘 것. 없는 정보를 추정하지 말고 confidence 0.3 이하로 내릴 것.
+  케이스임. `USER_CAPTION` 이 있으면 그 텍스트를 **우선 신호**로 써서 카테고리·
+  태그·요약을 결정할 것. 없으면 `trend-reports`(기본)로 보내고, tags 에
+  `instagram` 만 덧붙여 confidence 0.3 이하로 내릴 것.
+
+# 사용자 캡션 (USER_CAPTION)
+
+입력에 `USER_CAPTION` 라인이 포함되면, 이는 공유 시점에 사용자가 직접 덧붙인
+짧은 메모·해시태그·감상입니다 (한 단어일 수도 있음). 본문(특히 fetcher가 남긴
+placeholder 텍스트)보다 **우선하는 분류 신호**로 다루세요. 사용자가 의도적으로
+남긴 맥락이기 때문입니다. 캡션이 없으면 기존 규칙을 그대로 적용합니다.
+
+# 본문 노이즈 무시 (SNS/OCR)
+
+본문에 IG/X/Threads UI 텍스트나 OCR 잔해가 섞여 있을 수 있습니다. 아래는
+**의미 없는 노이즈**로 간주하고 분류 신호에서 제외하세요:
+
+- UI 라벨: `Follow`, `Following`, `Suggested for you`, `Liked by`, `View all comments`,
+  `See translation`, `Share`, `Save`, `Reply`, `더 보기`, `팔로우` 등
+- 숫자 통계: `12.3K likes`, `views`, `42 comments`, 팔로워 수 등
+- 시간 표시: `2h`, `3d ago`, `방금 전`, 날짜 스탬프
+- 계정 표시: `@handle` 만 단독으로 나열된 경우 (본문과 무관한 추천 계정 블록)
+
+의미 있는 키워드(제품명·개념·주장·수치 결과)만 뽑아 분류/요약하세요. 본문이
+이런 노이즈로만 구성돼 있으면 `USER_CAPTION`·제목·source 에 의존해 판단하고
+`confidence` 를 0.4 이하로 낮추세요.
 
 # 태그 규칙
 

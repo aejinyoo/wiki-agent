@@ -1,6 +1,6 @@
 """GitHub Issues를 inbox로 사용.
 
-iOS Shortcut이 이슈를 만들고 (title=URL, body=memo, label=inbox),
+iOS Shortcut이 이슈를 만들고 (title=URL, body=클립보드 캡션, label=inbox),
 ingester가 이슈를 읽어 처리한 뒤 close 한다.
 """
 
@@ -22,7 +22,7 @@ API = "https://api.github.com"
 class InboxIssue:
     number: int
     url: str            # 이슈 title이 곧 캡처된 URL
-    memo: str           # body
+    user_caption: str   # body — 공유 시점 클립보드 캡션 (검증 전 원문)
     created_at: str     # ISO8601
 
 
@@ -56,7 +56,7 @@ def list_open_inbox_issues(limit: int = 50) -> list[InboxIssue]:
         items.append(InboxIssue(
             number=issue["number"],
             url=(issue.get("title") or "").strip(),
-            memo=(issue.get("body") or "").strip(),
+            user_caption=(issue.get("body") or "").strip(),
             created_at=issue.get("created_at", ""),
         ))
     return items

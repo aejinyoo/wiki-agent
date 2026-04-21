@@ -60,11 +60,14 @@ def _build_system(personal_context: str) -> str:
 def _build_user(item_data: dict, extracted: dict) -> str:
     # 토큰 절약: 본문은 1500토큰 근사치로 잘라 보냄 (char 기준 ~6000)
     text = (extracted.get("text") or "")[:6000]
+    caption = extracted.get("user_caption") or ""
+    caption_block = f"USER_CAPTION: {caption}\n" if caption else ""
     return (
         f"URL: {item_data['url']}\n"
         f"SOURCE: {item_data['source']}\n"
         f"TITLE: {extracted.get('title', '')}\n"
         f"CAPTURED_AT: {item_data['captured_at']}\n"
+        f"{caption_block}"
         f"\n---\n본문:\n{text}\n"
     )
 
