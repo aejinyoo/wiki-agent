@@ -11,7 +11,7 @@ SNS 공유 링크(X, Instagram, YouTube) 본문을 채널별 어댑터로 안정
 ## 진행
 
 ### 2026-04-21
-- **Task 8** IG 분류 신호: 사용자 클립보드 캡션 수용 (`__PENDING__`) — `lib/user_caption.py` 검증 휴리스틱 (URL/공백/None 거름, 글자수 제한 없음), `github_inbox.InboxIssue.memo` → `user_caption` 리네임, `ingester._run_issues_mode`/`_run_file_mode` 양쪽에서 validate → `extracted["user_caption"]`, `classifier._build_user` USER_CAPTION 라인 주입, `prompts/classifier.md` IG placeholder 분기에 캡션 우선 규칙 추가, `test_user_caption.py` 15 케이스
+- **Task 8** IG 분류 신호: 사용자 클립보드 캡션 수용 (`5668adf`) — `lib/user_caption.py` 검증 휴리스틱 (URL/공백/None 거름, 글자수 제한 없음), `github_inbox.InboxIssue.memo` → `user_caption` 리네임, `ingester._run_issues_mode`/`_run_file_mode` 양쪽에서 validate → `extracted["user_caption"]`, `classifier._build_user` USER_CAPTION 라인 주입, `prompts/classifier.md` IG placeholder 분기에 캡션 우선 규칙 추가, `test_user_caption.py` 15 케이스
 
 ### 2026-04-20
 - **Task 1.7** retry.py by-source 일괄 모드 (`28ecbd0`) — `by-source SOURCE [--apply] [--delete-only]`, dry-run 기본, ALLOWED_SOURCES 검증, 아이템별 try/except
