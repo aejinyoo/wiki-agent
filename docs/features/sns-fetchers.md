@@ -1,6 +1,6 @@
 # sns-fetchers
 
-**상태**: 구현 중 (9/10) · **업데이트**: 2026-04-23
+**상태**: 구현 중 (10/10) · **업데이트**: 2026-04-23
 
 ## 요약
 SNS 공유 링크(X, Instagram, YouTube) 본문을 채널별 어댑터로 안정 수집하도록 ingester 파이프라인 재편. 기존 generic `requests + trafilatura`가 클라이언트 렌더링/로그인월에 막혀 로그인 페이지 HTML이 인덱스에 오염되던 문제 해결.
@@ -9,6 +9,18 @@ SNS 공유 링크(X, Instagram, YouTube) 본문을 채널별 어댑터로 안정
 **Out of scope**: Threads, IG 로그인 크롤링, Whisper 전사, wiki-site UI.
 
 ## 진행
+
+### 2026-04-23 (3)
+- **Task 5** `transcript_cleanup` 에이전트 신설 — YouTube 자막을 Gemini Flash-Lite 로 prose 정제
+  - 신규 `agents/transcript_cleanup.py` — ingester↔classifier 사이 단계. 필터: `source=YouTube` + `fetch_status=ok` + `has_transcript` + 길이 ≥ `TRANSCRIPT_CLEANUP_MIN_CHARS`(기본 500) + 미정제
+  - 신규 `prompts/transcript_cleanup.md` — 요약/번역/정보추가 금지, 필러·중복 제거 + 문단 분할만
+  - 저장 방식: 원문(`extracted.text`) 보존 + `extracted.text_cleaned` 병기 + payload 최상위 `cleaned: true` 플래그
+  - `agents/classifier.py`: `_build_user` / `_compose_body` 에서 `text_cleaned` 우선, 없으면 `text` 폴백
+  - `agents/nightly.py`: 오케스트레이터 2단계로 삽입 (ingester → transcript_cleanup → classifier)
+  - 신규 env: `TRANSCRIPT_CLEANUP_DAILY_ITEM_CAP` (기본 15), `TRANSCRIPT_CLEANUP_MIN_CHARS` (기본 500)
+  - `lib.llm.TokenCapExceeded` 시 루프 중단, 개별 LLM 예외/빈 출력은 스킵 후 계속 (파이프라인 정책)
+  - 신규 `tests/test_transcript_cleanup.py` 16 케이스 — 필터/성공/실패/빈출력/dry-run/캡/토큰캡/classifier 폴백
+- 전체 단위 65/65 통과
 
 ### 2026-04-23 (2)
 - **Task 6** ingester status 기반 분기 정식화 — `extract_content` dict 변환 래퍼 제거, `fetchers.dispatch()` → `FetchResult` 를 ingester 본체가 직접 소비
@@ -48,11 +60,17 @@ SNS 공유 링크(X, Instagram, YouTube) 본문을 채널별 어댑터로 안정
 
 ## 다음
 - [ ] **Shortcut 변경(사용자)**: IG URL 공유 직전 캡션 영역 스크린샷 → Shortcut 이 "최근 사진 1장" → OCR → 이슈 body 에 동봉. iOS IG 앱은 캡션 직접 복사 불가 (2026-04-23 결정 참고)
-- [ ] **Task 2 통합 스모크**: 실제 YouTube URL(자막 O/X 각 1건)로 `fetch()` 호출해 raw JSON 구조 확인 (top-level `fetch_status` 포함 확인)
-- [ ] **Task 5** `transcript_cleanup` 에이전트 신설 — ingester↔classifier 사이, Gemini Flash-Lite, `cleaned` 플래그 + 일일 캡. Task 6 의 `fetch_status` 를 읽어 `no_transcript` 는 건너뛰고 `ok` 중 youtube 자막만 대상으로
+- [ ] **Task 2 + Task 5 통합 스모크**: 실 YouTube URL 로 파이프라인 한 바퀴 — `ingester → transcript_cleanup → classifier` 순서로 raw JSON 에 `text`/`text_cleaned`/`cleaned` 필드가 제대로 쌓이는지, classifier 가 `text_cleaned` 를 소비하는지 확인
+- [x] **Task 5** transcript_cleanup 에이전트 (2026-04-23)
 - [x] **Task 6** ingester status 기반 분기 (2026-04-23)
 
 ## 결정
+
+### 2026-04-23: transcript_cleanup 은 원문 덮어쓰지 않고 text_cleaned 병기 (Task 5)
+- 선택지: (a) `extracted.text` 덮어쓰기 — 저장 용량 절약 (b) `text_cleaned` 추가 — 원문 보존. **(b) 채택.**
+- 이유: LLM 정제가 문맥 오해·환각으로 사실을 바꿨을 때 되돌릴 수 있어야 함. 재처리(프롬프트 개선 후 재실행)도 원문이 있어야 가능.
+- 저장 비용은 YouTube 건당 평균 +30~40% 정도로 수용 가능. 반환 불가능한 품질 저하 리스크보다 작음.
+- classifier 는 `text_cleaned` → `text` 순으로 폴백 읽기. cleanup 실패·미적용 아이템도 원래 경로로 분류 가능 (파이프라인 정책 일치).
 
 ### 2026-04-23: IG 캡션 복사 불가 → Shortcut 에서 스크린샷+OCR 로 전환
 - 2026-04-21 결정("클립보드 캡션 채택")은 iOS IG 앱에서 캡션을 직접 복사할 수 없다는 제약으로 현실성 없음.

@@ -91,6 +91,17 @@ DAILY_TOKEN_CAP_HAIKU = int(os.environ.get("DAILY_TOKEN_CAP_HAIKU", "25000"))
 
 CLASSIFIER_DAILY_ITEM_CAP = int(os.environ.get("CLASSIFIER_DAILY_ITEM_CAP", "30"))
 
+# transcript_cleanup 전용 — YouTube 자막 정제 에이전트 일일 아이템 캡.
+# classifier 보다 토큰·아이템 비용이 높아 (긴 prose in/out) 별도 캡으로 관리.
+TRANSCRIPT_CLEANUP_DAILY_ITEM_CAP = int(
+    os.environ.get("TRANSCRIPT_CLEANUP_DAILY_ITEM_CAP", "15")
+)
+
+# transcript_cleanup 최소 텍스트 길이 — 이보다 짧으면 cleanup 비용 대비 효과 없음.
+TRANSCRIPT_CLEANUP_MIN_CHARS = int(
+    os.environ.get("TRANSCRIPT_CLEANUP_MIN_CHARS", "500")
+)
+
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
 
 

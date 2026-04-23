@@ -59,7 +59,8 @@ def _build_system(personal_context: str) -> str:
 
 def _build_user(item_data: dict, extracted: dict) -> str:
     # 토큰 절약: 본문은 1500토큰 근사치로 잘라 보냄 (char 기준 ~6000)
-    text = (extracted.get("text") or "")[:6000]
+    # transcript_cleanup 이 다듬어 둔 text_cleaned 가 있으면 그것을 우선 (원문은 raw 에 유지).
+    text = (extracted.get("text_cleaned") or extracted.get("text") or "")[:6000]
     caption = extracted.get("user_caption") or ""
     caption_block = f"USER_CAPTION: {caption}\n" if caption else ""
     return (
@@ -140,7 +141,10 @@ def classify_one(raw_path: Path, system: str) -> WikiItem | None:
         tags=parsed["tags"],
         category=parsed["category"],
         confidence=parsed["confidence"],
-        body=_compose_body(parsed["body_ko"], extracted.get("text") or ""),
+        body=_compose_body(
+            parsed["body_ko"],
+            extracted.get("text_cleaned") or extracted.get("text") or "",
+        ),
         key_takeaways=parsed["key_takeaways"],
         why_it_matters=parsed["why_it_matters"],
         what_to_try=parsed["what_to_try"],
