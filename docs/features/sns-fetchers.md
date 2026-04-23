@@ -11,7 +11,7 @@ SNS 공유 링크(X, Instagram, YouTube) 본문을 채널별 어댑터로 안정
 ## 진행
 
 ### 2026-04-23
-- **Task 2** YouTube 자막 고도화 — `lib/fetchers/youtube.py` 리팩터
+- **Task 2** YouTube 자막 고도화 (`76d3423`) — `lib/fetchers/youtube.py` 리팩터
   - `_extract_video_id`: watch/youtu.be/shorts/embed/v/bare ID 5개 포맷 지원
   - `_pick_transcript`: 언어 우선순위 6단계 (ko 수동 → en 수동 → 기타 수동 → ko 자동 → en 자동 → 기타 자동)
   - `_group_snippets_by_60s`: 자막을 60초 단위 문단으로 묶어 text 필드 구성
@@ -19,6 +19,7 @@ SNS 공유 링크(X, Instagram, YouTube) 본문을 채널별 어댑터로 안정
   - metadata: `video_id`, `channel`, `duration`, `language`, `has_transcript`, `fetch_status`
 - `pyproject.toml`: `youtube-transcript-api>=0.6.2` 추가
 - `tests/fetchers/test_youtube.py`: 19 케이스 (video_id 추출 11 + 60s 청크 7 + 실패 분기 1) — 네트워크 의존성 0, 모두 통과
+- 라이브 스모크 통과: watch URL(수동 en 자막, 2092자) + shorts URL(자동 en 자막, 45자) + 잘못된 URL(status=failed)
 
 ### 2026-04-21
 - **Task 8** IG 분류 신호: 사용자 클립보드 캡션 수용 (`5668adf`) — `lib/user_caption.py` 검증 휴리스틱 (URL/공백/None 거름, 글자수 제한 없음), `github_inbox.InboxIssue.memo` → `user_caption` 리네임, `ingester._run_issues_mode`/`_run_file_mode` 양쪽에서 validate → `extracted["user_caption"]`, `classifier._build_user` USER_CAPTION 라인 주입, `prompts/classifier.md` IG placeholder 분기에 캡션 우선 규칙 추가, `test_user_caption.py` 15 케이스
@@ -74,5 +75,5 @@ SNS 공유 링크(X, Instagram, YouTube) 본문을 채널별 어댑터로 안정
 
 ## 링크
 - `lib/fetchers/`, `lib/wiki_io.py`, `lib/user_caption.py`, `lib/github_inbox.py`, `agents/ingester.py`, `agents/classifier.py`, `prompts/classifier.md`, `scripts/retry.py`, `tests/test_url_hash.py`, `tests/test_retry_by_source.py`, `tests/test_user_caption.py`
-- 커밋: `28ecbd0`, `ad604ad`, `bb30283`, `3130645`
+- 커밋: `28ecbd0`, `ad604ad`, `bb30283`, `3130645`, `5668adf`, `76d3423`
 - 참고 스킬: `.claude/skills/youtube-transcript/` (Task 2 포팅 대상)

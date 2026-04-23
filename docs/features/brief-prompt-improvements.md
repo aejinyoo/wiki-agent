@@ -6,19 +6,19 @@
 일일 브리프가 (1) 2일 수집창 때문에 같은 아이템을 연속 이틀 추천하고 (2) AI/생성 툴 카테고리에만 편향되는 문제를 해결. 최근 7일 브리프의 하이라이트 URL/카테고리를 프롬프트에 주입해 중복 배제 + 다양성 가드.
 
 ## 진행
-### 2026-04-23
+### 2026-04-23 (`6231ab9`)
 - 문제 확인: 4/20–21 "Claude 루틴", "로컬 Claude 세션" 연속 추천 / 4/22–23 "Blunge.ai" 연속 추천 / 카테고리는 `generative-tools`·`prompt-ui`·`agent-interaction` 에 집중.
 - `agents/daily_brief.py`:
-  - `_recent_brief_highlights(target, days=7)` 추가 — 과거 브리프 `## 📌` 섹션에서 `### N. [제목](url)` + 첫 불릿 `**카테고리**` 파싱.
+  - `_recent_brief_highlights(target, days=7)` 추가 — 과거 브리프 `## 📌` 섹션에서 `### N. [제목](url)` + 첫 불릿 `**카테고리**` 파싱. 카드 포맷 2종(형식 A: 첫 bold=카테고리 / 형식 B: `**카테고리** · name`) 모두 대응.
   - `_build_user_for_date` 에 `[최근 7일 추천 내역 — 재추천 금지]` 블록 추가. 카테고리 분포 요약 포함.
   - dry-run 시 user 메시지 프리뷰 출력.
 - `prompts/daily_brief.md`:
   - "중복 추천 금지" 섹션: URL 기준 배제, 후보 부족 시 `(신규 아이템 부족)` 표시.
   - "주제 다양성 가드" 섹션: 최근 7일 카테고리가 60% 이상 쏠려 있으면 오늘 3개는 다른 카테고리로 다양화, 비 AI 주제 신규 아이템이 있으면 최소 1개 포함.
-- (커밋 예정)
+- 로컬 dry-run 검증: 최근 7일 하이라이트 9건 파싱 + 카테고리 분포(`generative-tools×3, agent-interaction×2, ai-ux-patterns×1, -×3`) + 재추천 금지 블록이 user prompt에 정상 주입됨.
 
 ## 다음
-- [ ] 사용자 로컬에서 `python agents/daily_brief.py --dry-run --force` 실행해 user prompt preview 확인
+- [x] 사용자 로컬에서 `python agents/daily_brief.py --dry-run --force` 실행해 user prompt preview 확인 (2026-04-23)
 - [ ] 내일 07:30 KST nightly 결과물(4/24 브리프)이 실제로 중복 없이 다양화되는지 확인
 - [ ] 다양성 가드가 너무 강해 신규 아이템을 억지로 끼워넣는 부작용이 보이면 60% 임계값 조정
 
