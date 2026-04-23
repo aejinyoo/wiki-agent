@@ -1,6 +1,6 @@
 # sns-fetchers
 
-**상태**: 구현 중 (7/9) · **업데이트**: 2026-04-21
+**상태**: 구현 중 (8/9) · **업데이트**: 2026-04-23
 
 ## 요약
 SNS 공유 링크(X, Instagram, YouTube) 본문을 채널별 어댑터로 안정 수집하도록 ingester 파이프라인 재편. 기존 generic `requests + trafilatura`가 클라이언트 렌더링/로그인월에 막혀 로그인 페이지 HTML이 인덱스에 오염되던 문제 해결.
@@ -9,6 +9,16 @@ SNS 공유 링크(X, Instagram, YouTube) 본문을 채널별 어댑터로 안정
 **Out of scope**: Threads, IG 로그인 크롤링, Whisper 전사, wiki-site UI.
 
 ## 진행
+
+### 2026-04-23
+- **Task 2** YouTube 자막 고도화 — `lib/fetchers/youtube.py` 리팩터
+  - `_extract_video_id`: watch/youtu.be/shorts/embed/v/bare ID 5개 포맷 지원
+  - `_pick_transcript`: 언어 우선순위 6단계 (ko 수동 → en 수동 → 기타 수동 → ko 자동 → en 자동 → 기타 자동)
+  - `_group_snippets_by_60s`: 자막을 60초 단위 문단으로 묶어 text 필드 구성
+  - 자막 없으면 `status="no_transcript"` + yt_dlp description 폴백. ingester는 현재 `error` 필드 기준이라 error=None으로 두어 정상 저장 루트를 탐 (Task 6에서 status 기반 분기 도입 예정)
+  - metadata: `video_id`, `channel`, `duration`, `language`, `has_transcript`, `fetch_status`
+- `pyproject.toml`: `youtube-transcript-api>=0.6.2` 추가
+- `tests/fetchers/test_youtube.py`: 19 케이스 (video_id 추출 11 + 60s 청크 7 + 실패 분기 1) — 네트워크 의존성 0, 모두 통과
 
 ### 2026-04-21
 - **Task 8** IG 분류 신호: 사용자 클립보드 캡션 수용 (`5668adf`) — `lib/user_caption.py` 검증 휴리스틱 (URL/공백/None 거름, 글자수 제한 없음), `github_inbox.InboxIssue.memo` → `user_caption` 리네임, `ingester._run_issues_mode`/`_run_file_mode` 양쪽에서 validate → `extracted["user_caption"]`, `classifier._build_user` USER_CAPTION 라인 주입, `prompts/classifier.md` IG placeholder 분기에 캡션 우선 규칙 추가, `test_user_caption.py` 15 케이스
@@ -27,11 +37,16 @@ SNS 공유 링크(X, Instagram, YouTube) 본문을 채널별 어댑터로 안정
 
 ## 다음
 - [ ] **Shortcut 변경(사용자)**: IG URL 공유 시 `Get Clipboard` 결과를 이슈 body에 동봉 → 다음 cron 에서 `user_caption` 실제 데이터 확인
-- [ ] **Task 2** YouTube 자막 고도화 — `youtube-transcript-api` 추가, 언어 우선순위 6단계, 60초 문단 묶기, `status="no_transcript"` fallback
+- [ ] **Task 2 통합 스모크**: 실제 YouTube URL(자막 O/X 각 1건)로 `fetch()` 호출해 raw JSON 구조 확인
 - [ ] **Task 5** `transcript_cleanup` 에이전트 신설 — ingester↔classifier 사이, Gemini Flash-Lite, `cleaned` 플래그 + 일일 캡
-- [ ] **Task 6** ingester status 기반 분기 — FetchResult→dict 변환 제거, status별 저장/실패 분기, `save_raw`에 status 확장
+- [ ] **Task 6** ingester status 기반 분기 — FetchResult→dict 변환 제거, status별 저장/실패 분기, `save_raw`에 status 확장 (Task 2에서 `no_transcript` 를 error=None으로 우회했으므로 이 Task에서 정식화)
 
 ## 결정
+
+### 2026-04-23: no_transcript 상태는 당분간 error=None 으로 정상 저장 루트에 태움
+- 현 ingester `extract_content` 가 FetchResult.status 를 버리고 `error` 유무로 실패 판정. `no_transcript`을 error 로 보내면 raw 저장이 아예 안 됨.
+- description 폴백이 있으면 최소한의 분류 신호가 있으므로 error 없이 저장하는 게 실용적. 상태 식별은 `metadata.fetch_status` 로 남김.
+- Task 6 에서 `status` 필드를 ingester 본체가 직접 읽도록 리팩터할 때 정식 분기 도입.
 
 ### 2026-04-21: IG 분류 신호는 사용자 클립보드 캡션 채택, vision 거절
 - Vision(첫 이미지 분석) vs. 사용자 클립보드 캡션 두 안 비교. 캡션 채택. 토큰 비용 0 + 텍스트 신호가 이미지보다 분류 정확도 높음.

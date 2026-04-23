@@ -23,6 +23,7 @@ dependencies = [
 
     # YouTube
     "yt-dlp>=2024.10.0",
+    "youtube-transcript-api>=0.6.2",
 
     # URL 정규화·해시
     "urllib3>=2.2.0",

@@ -16,9 +16,9 @@
 
 ### sns-fetchers
 - 파일: `docs/features/sns-fetchers.md`
-- 상태: 구현 중 (7/9 완료)
-- 업데이트: 2026-04-21
-- 다음: iOS Shortcut에서 `Get Clipboard` 이슈 body 동봉(사용자) → 다음 cron에서 `user_caption` 실데이터 검증 → Task 2 (YouTube 자막 고도화)
+- 상태: 구현 중 (8/9 완료)
+- 업데이트: 2026-04-23
+- 다음: 실제 YouTube URL로 Task 2 통합 스모크(자막 O/X 각 1건) → Task 5 `transcript_cleanup` 에이전트 → Task 6 ingester status 기반 분기
 
 ### brief-prompt-improvements
 - 파일: `docs/features/brief-prompt-improvements.md`
