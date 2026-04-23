@@ -20,6 +20,12 @@
 - 업데이트: 2026-04-21
 - 다음: iOS Shortcut에서 `Get Clipboard` 이슈 body 동봉(사용자) → 다음 cron에서 `user_caption` 실데이터 검증 → Task 2 (YouTube 자막 고도화)
 
+### brief-prompt-improvements
+- 파일: `docs/features/brief-prompt-improvements.md`
+- 상태: 구현 완료 · 검증 대기
+- 업데이트: 2026-04-23
+- 다음: 로컬에서 `--dry-run --force` 프리뷰 확인 → 내일 07:30 KST 결과 검증
+
 ## 다음 예정 (착수 전)
 
 > sns-fetchers 마무리 후 아래 순서대로. 각 항목 상세는 feature 문서 참조.

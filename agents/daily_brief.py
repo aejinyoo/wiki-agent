@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import logging
+import re
 
 import _bootstrap
 
@@ -60,15 +61,96 @@ def _items_for(target: dt.date, max_items: int = 15) -> list[dict]:
     return items[:max_items]
 
 
-def _build_user_for_date(target: dt.date, items: list[dict], personal_context: str) -> str:
+# ─────────────────────────────────────────────────────────────
+# 최근 브리프 하이라이트 파싱 (중복 추천 방지용)
+# ─────────────────────────────────────────────────────────────
+
+# "### 1. [제목](url)" 형태에서 제목·URL 추출
+_HIGHLIGHT_RE = re.compile(r"^###\s+\d+\.\s+\[([^\]]+)\]\(([^)]+)\)", re.MULTILINE)
+# 하이라이트 카드의 첫 불릿에서 카테고리 추출. 두 포맷 모두 대응:
+#   형식 A: "- **generative-tools** · **source.com** · `tag`"  → 첫 bold=카테고리
+#   형식 B: "- **카테고리** · generative-tools · `tag`"        → "**카테고리** · " 뒤 평문
+_CATEGORY_B_RE = re.compile(r"^-\s+\*\*카테고리\*\*\s*·\s*([a-z0-9-]+)", re.MULTILINE)
+_CATEGORY_A_RE = re.compile(r"^-\s+\*\*([a-z0-9-]+)\*\*", re.MULTILINE)
+
+
+def _recent_brief_highlights(target: dt.date, days: int = 7) -> list[dict]:
+    """target 이전 `days`일간 브리프에서 📌 하이라이트로 뽑힌 아이템 추출.
+
+    반환: [{"title": ..., "url": ..., "category": ..., "date": "YYYY-MM-DD"}, ...]
+    target 당일 브리프는 제외 (force 재생성 시 자기 자신을 히스토리로 보지 않기 위해).
+    """
+    out: list[dict] = []
+    for offset in range(1, days + 1):
+        day = target - dt.timedelta(days=offset)
+        p = paths.DAILY_DIR / f"{day.isoformat()}.md"
+        if not p.exists():
+            continue
+        try:
+            text = p.read_text(encoding="utf-8")
+        except OSError:
+            continue
+
+        # 📌 하이라이트 섹션만 대상 (🧪 실험 테이블의 링크는 제외)
+        sec_start = text.find("## 📌")
+        if sec_start == -1:
+            continue
+        sec_end = text.find("\n## ", sec_start + 3)
+        section = text[sec_start : sec_end if sec_end != -1 else len(text)]
+
+        for m in _HIGHLIGHT_RE.finditer(section):
+            title, url = m.group(1).strip(), m.group(2).strip()
+            # 해당 카드 블록 안에서 카테고리 추출 시도
+            card_start = m.end()
+            next_card = _HIGHLIGHT_RE.search(section, card_start)
+            card = section[card_start : next_card.start() if next_card else len(section)]
+            # 형식 B("**카테고리** · name")를 먼저, 없으면 형식 A(첫 bold)
+            cat_b = _CATEGORY_B_RE.search(card)
+            cat_a = None if cat_b else _CATEGORY_A_RE.search(card)
+            category = (cat_b.group(1) if cat_b else (cat_a.group(1) if cat_a else ""))
+            out.append({
+                "title": title,
+                "url": url,
+                "category": category,
+                "date": day.isoformat(),
+            })
+    return out
+
+
+def _build_user_for_date(
+    target: dt.date,
+    items: list[dict],
+    personal_context: str,
+    recent_highlights: list[dict] | None = None,
+) -> str:
     lines = [
         f"오늘 날짜: {target.isoformat()}",
         "",
         "[개인화 컨텍스트]",
         personal_context,
         "",
-        "[어제~그제 수집 아이템]",
+        "[최근 7일 추천 내역 — 재추천 금지]",
     ]
+    if not recent_highlights:
+        lines.append("(없음)")
+    else:
+        # 카테고리 분포 요약 (다양성 가드 근거)
+        cat_counts: dict[str, int] = {}
+        for h in recent_highlights:
+            c = h.get("category") or "-"
+            cat_counts[c] = cat_counts.get(c, 0) + 1
+        dist = ", ".join(f"{c}×{n}" for c, n in sorted(cat_counts.items(), key=lambda x: -x[1]))
+        lines.append(f"카테고리 분포: {dist}")
+        lines.append("")
+        for h in recent_highlights:
+            lines.append(
+                f"- [{h['date']}] ({h.get('category') or '-'}) {h['title']} — {h['url']}"
+            )
+
+    lines.extend([
+        "",
+        "[어제~그제 수집 아이템]",
+    ])
     if not items:
         lines.append("(없음)")
     else:
@@ -87,6 +169,8 @@ def _build_user_for_date(target: dt.date, items: list[dict], personal_context: s
     lines.extend([
         "",
         "위 데이터를 바탕으로 프롬프트의 템플릿 형식에 맞춰 브리프를 생성하세요.",
+        "[최근 7일 추천 내역]에 있는 URL은 하이라이트/실험 어디에도 다시 등장시키지 말고,",
+        "카테고리 분포가 한쪽으로 쏠려 있다면 오늘 하이라이트 3개는 서로 다른 카테고리로 다양화하세요.",
     ])
     return "\n".join(lines)
 
@@ -111,16 +195,28 @@ def _generate_one(target: dt.date, dry_run: bool, force: bool) -> bool:
         return False
 
     items = _items_for(target)
-    log.info("[%s] 어제~그제 아이템 %d건", target.isoformat(), len(items))
+    recent = _recent_brief_highlights(target, days=7)
+    log.info(
+        "[%s] 어제~그제 아이템 %d건 · 최근 7일 하이라이트 %d건",
+        target.isoformat(), len(items), len(recent),
+    )
 
     if dry_run:
         print(f"\n===== {target.isoformat()} =====")
-        print(f"[dry-run] Sonnet 호출 스킵 · items={len(items)}건 · out={out_path.name}")
+        print(
+            f"[dry-run] Sonnet 호출 스킵 · items={len(items)}건 · "
+            f"recent_highlights={len(recent)}건 · out={out_path.name}"
+        )
+        # dry-run 시 프롬프트 user 메시지 미리보기 (검증용)
+        preview = _build_user_for_date(target, items, _load_personal_context(), recent)
+        print("----- user prompt preview -----")
+        print(preview[:2000])
+        print("----- end preview -----")
         return True
 
     personal_context = _load_personal_context()
     system = _load_prompt()
-    user = _build_user_for_date(target, items, personal_context)
+    user = _build_user_for_date(target, items, personal_context, recent)
 
     try:
         result = claude.call_sonnet(system=system, user=user, max_tokens=3500)
