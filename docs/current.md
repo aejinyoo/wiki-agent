@@ -16,9 +16,9 @@
 
 ### sns-fetchers
 - 파일: `docs/features/sns-fetchers.md`
-- 상태: 구현 중 (8/9 완료)
+- 상태: 구현 중 (9/10 완료)
 - 업데이트: 2026-04-23
-- 다음: 실제 YouTube URL로 Task 2 통합 스모크(자막 O/X 각 1건) → Task 5 `transcript_cleanup` 에이전트 → Task 6 ingester status 기반 분기
+- 다음: Task 2 통합 스모크(실 YouTube URL 자막 O/X) → Task 5 `transcript_cleanup` 에이전트 → Shortcut OCR 전환 후 user_caption 실데이터 검증
 
 ### brief-prompt-improvements
 - 파일: `docs/features/brief-prompt-improvements.md`

@@ -1,13 +1,15 @@
-"""사용자 클립보드 캡션 검증.
+"""사용자 캡션 검증.
 
-iOS Shortcut이 IG URL 공유 시 `Get Clipboard` 결과를 이슈 body(또는 inbox 블록)에
-동봉해 보낸다. Ingester 레이어에서 이 값을 검증해 raw 메타의 `user_caption` 으로
-저장하면, classifier가 본문 placeholder보다 우선하는 분류 신호로 활용한다.
+iOS Shortcut 이 IG URL 공유 시 캡션 영역 스크린샷을 OCR 한 텍스트를 이슈 body
+(또는 inbox 블록)에 동봉해 보낸다. Ingester 레이어에서 이 값을 검증해 raw 메타의
+`user_caption` 으로 저장하면, classifier 가 본문 placeholder 보다 우선하는 분류
+신호로 활용한다. (과거 설계는 클립보드 복사였으나 iOS IG 앱 제약으로 OCR 로 전환 —
+서버측 검증 로직은 두 경로 모두에 대해 동일.)
 
 검증 규칙:
 - None / 빈 문자열 / 공백만 → None (조용히 무시)
-- URL 형식 (scheme + netloc 모두 존재) → None (클립보드 오염 케이스, log.info로 흔적)
-- 그 외 → strip() 결과 그대로 통과. 글자수 제한 없음.
+- URL 형식 (scheme + netloc 모두 존재) → None (오염 케이스, log.info 로 흔적)
+- 그 외 → strip() 결과 그대로 통과. 글자수·내용 검증 없음.
 """
 
 from __future__ import annotations

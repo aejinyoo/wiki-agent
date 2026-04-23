@@ -307,16 +307,20 @@ def iter_wiki_items():
 # raw/ 저장
 # ─────────────────────────────────────────────────────────────
 
-def save_raw(item: WikiItem, extracted: dict) -> Path:
+def save_raw(item: WikiItem, extracted: dict, *, fetch_status: str = "ok") -> Path:
     """Ingester가 원본 추출 결과를 raw/<id>.json (flat) 으로 저장.
 
     날짜 정보는 payload['item']['captured_at'] 에 이미 담겨 있으므로
     별도 날짜 폴더를 두지 않습니다. 아카이브 시 captured_at 에서 월 버킷을 계산합니다.
+
+    `fetch_status` 는 FetchResult.status 를 그대로 보존 (ok/no_transcript 등).
+    downstream(classifier, transcript_cleanup)이 degraded 본문 여부를 판단하는 1차 키.
     """
     paths.RAW_DIR.mkdir(parents=True, exist_ok=True)
     out = paths.RAW_DIR / f"{item.id}.json"
     payload = {
         "item": asdict(item),
+        "fetch_status": fetch_status,
         "extracted": extracted,
     }
     out.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")

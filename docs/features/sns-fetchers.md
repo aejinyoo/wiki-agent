@@ -1,6 +1,6 @@
 # sns-fetchers
 
-**상태**: 구현 중 (8/9) · **업데이트**: 2026-04-23
+**상태**: 구현 중 (9/10) · **업데이트**: 2026-04-23
 
 ## 요약
 SNS 공유 링크(X, Instagram, YouTube) 본문을 채널별 어댑터로 안정 수집하도록 ingester 파이프라인 재편. 기존 generic `requests + trafilatura`가 클라이언트 렌더링/로그인월에 막혀 로그인 페이지 HTML이 인덱스에 오염되던 문제 해결.
@@ -9,6 +9,16 @@ SNS 공유 링크(X, Instagram, YouTube) 본문을 채널별 어댑터로 안정
 **Out of scope**: Threads, IG 로그인 크롤링, Whisper 전사, wiki-site UI.
 
 ## 진행
+
+### 2026-04-23 (2)
+- **Task 6** ingester status 기반 분기 정식화 — `extract_content` dict 변환 래퍼 제거, `fetchers.dispatch()` → `FetchResult` 를 ingester 본체가 직접 소비
+  - `_SAVE_STATUSES = {"ok", "no_transcript"}` 화이트리스트로 저장 루트 분기
+  - `login_required` / `failed` 는 저장 없이 `label_issue_failed` (이슈 모드) 또는 `inbox-failed.md` (파일 모드) 로 이관
+  - `save_raw(item, extracted, *, fetch_status="ok")` 시그니처 확장 — raw payload 최상위에 `fetch_status` persist
+  - `no_transcript` 케이스는 이슈 close 코멘트에 "자막 없음 — description 폴백" 플래그 표기
+  - Task 2 에서 youtube 가 `metadata.fetch_status` 로 우회 표기한 필드 제거 (이제 payload 최상위에 단일 소스)
+  - 신규 `tests/test_ingester_status.py` 13 케이스 (issues/file 모드 각 status 별 분기 + `_fail_reason` helper)
+- 전체 단위 49/49 통과
 
 ### 2026-04-23
 - **Task 2** YouTube 자막 고도화 (`76d3423`) — `lib/fetchers/youtube.py` 리팩터
@@ -37,17 +47,25 @@ SNS 공유 링크(X, Instagram, YouTube) 본문을 채널별 어댑터로 안정
 - **Task 1** fetcher 모듈화 — `lib/fetchers/{base,__init__,generic,youtube}.py`, `FetchResult` dataclass, `extract_content()` dispatch thin wrapper
 
 ## 다음
-- [ ] **Shortcut 변경(사용자)**: IG URL 공유 시 `Get Clipboard` 결과를 이슈 body에 동봉 → 다음 cron 에서 `user_caption` 실제 데이터 확인
-- [ ] **Task 2 통합 스모크**: 실제 YouTube URL(자막 O/X 각 1건)로 `fetch()` 호출해 raw JSON 구조 확인
-- [ ] **Task 5** `transcript_cleanup` 에이전트 신설 — ingester↔classifier 사이, Gemini Flash-Lite, `cleaned` 플래그 + 일일 캡
-- [ ] **Task 6** ingester status 기반 분기 — FetchResult→dict 변환 제거, status별 저장/실패 분기, `save_raw`에 status 확장 (Task 2에서 `no_transcript` 를 error=None으로 우회했으므로 이 Task에서 정식화)
+- [ ] **Shortcut 변경(사용자)**: IG URL 공유 직전 캡션 영역 스크린샷 → Shortcut 이 "최근 사진 1장" → OCR → 이슈 body 에 동봉. iOS IG 앱은 캡션 직접 복사 불가 (2026-04-23 결정 참고)
+- [ ] **Task 2 통합 스모크**: 실제 YouTube URL(자막 O/X 각 1건)로 `fetch()` 호출해 raw JSON 구조 확인 (top-level `fetch_status` 포함 확인)
+- [ ] **Task 5** `transcript_cleanup` 에이전트 신설 — ingester↔classifier 사이, Gemini Flash-Lite, `cleaned` 플래그 + 일일 캡. Task 6 의 `fetch_status` 를 읽어 `no_transcript` 는 건너뛰고 `ok` 중 youtube 자막만 대상으로
+- [x] **Task 6** ingester status 기반 분기 (2026-04-23)
 
 ## 결정
 
-### 2026-04-23: no_transcript 상태는 당분간 error=None 으로 정상 저장 루트에 태움
-- 현 ingester `extract_content` 가 FetchResult.status 를 버리고 `error` 유무로 실패 판정. `no_transcript`을 error 로 보내면 raw 저장이 아예 안 됨.
-- description 폴백이 있으면 최소한의 분류 신호가 있으므로 error 없이 저장하는 게 실용적. 상태 식별은 `metadata.fetch_status` 로 남김.
-- Task 6 에서 `status` 필드를 ingester 본체가 직접 읽도록 리팩터할 때 정식 분기 도입.
+### 2026-04-23: IG 캡션 복사 불가 → Shortcut 에서 스크린샷+OCR 로 전환
+- 2026-04-21 결정("클립보드 캡션 채택")은 iOS IG 앱에서 캡션을 직접 복사할 수 없다는 제약으로 현실성 없음.
+- 우회: 사용자가 공유 직전에 캡션이 보이게 스크린샷 → Shortcut 이 "최근 사진 1장"에서 OCR 로 텍스트 추출 → 이슈 body 에 동봉.
+- 서버측 `validate_user_caption` / `github_inbox.body → user_caption` 파이프라인은 변경 없이 그대로 OCR 텍스트를 user_caption 으로 수용 (문자열 내용 검증 없이 URL 만 거름).
+- 노이즈(Follow/Liked by/숫자 통계 등)는 `prompts/classifier.md` 의 "본문 노이즈 무시" 섹션이 이미 커버.
+- 후속 개선 여지: Photos 소스를 "최근 스크린샷 1장"으로 필터링해 일반 사진 오염 차단.
+
+### 2026-04-23: ingester 는 FetchResult.status 를 직접 읽는다 (Task 6)
+- 기존 `extract_content` 가 FetchResult → dict 변환하며 `status` 를 버리고 `error` 유무로 판정 → Task 2 에서 `no_transcript` 를 `error=None` 으로 우회해야 했던 빚 발생.
+- 해결: ingester 본체가 `fetchers.dispatch()` 를 직접 호출하고 `status` 로 분기. `_SAVE_STATUSES = {"ok", "no_transcript"}` 화이트리스트.
+- `fetch_status` 는 `save_raw` 가 raw payload **최상위**에 단일 소스로 persist. youtube 가 `metadata.fetch_status` 에 중복 표기하던 건 제거.
+- 왜 `no_transcript` 를 저장 루트에 태우나: description 폴백이 있어 최소 분류 신호가 남고, Task 5 의 `transcript_cleanup` 은 자막 있는 경우만 대상이므로 downstream 에서 이 status 를 보고 skip 하면 된다.
 
 ### 2026-04-21: IG 분류 신호는 사용자 클립보드 캡션 채택, vision 거절
 - Vision(첫 이미지 분석) vs. 사용자 클립보드 캡션 두 안 비교. 캡션 채택. 토큰 비용 0 + 텍스트 신호가 이미지보다 분류 정확도 높음.

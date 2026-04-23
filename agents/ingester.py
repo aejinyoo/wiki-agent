@@ -31,6 +31,12 @@ from lib.validate import _infer_source  # noqa: E402
 from lib.user_caption import validate_user_caption  # noqa: E402
 from lib import github_inbox  # noqa: E402
 from lib import fetchers  # noqa: E402
+from lib.fetchers import FetchResult  # noqa: E402
+
+
+# status 가 이 집합에 속하면 raw 로 저장한다. no_transcript 는 description 폴백이
+# 있어 분류 신호가 남으므로 저장 루트로 태운다.
+_SAVE_STATUSES = frozenset({"ok", "no_transcript"})
 
 log = logging.getLogger("ingester")
 
@@ -62,21 +68,23 @@ def parse_inbox_blocks(text: str) -> list[dict]:
 # ─────────────────────────────────────────────────────────────
 # URL별 본문 추출 — lib/fetchers 로 분리됨
 # ─────────────────────────────────────────────────────────────
-def extract_content(url: str, source: str) -> dict:
-    """fetchers.dispatch 호출 후 기존 dict shape 으로 변환.
+def _result_to_extracted(result: FetchResult) -> dict:
+    """FetchResult 를 classifier 가 읽는 extracted dict 로 변환.
 
-    status 기반 분기는 Task 5에서 도입. 지금은 기존 {title, text, error, ...} 형태를
-    그대로 유지해서 호출부를 깨지 않는다.
+    status / error 는 제외 (status 는 save_raw 인자로, error 는 저장 시점에 기록 불필요).
     """
-    result = fetchers.dispatch(url, source)
-    out: dict = {
+    return {
         "title": result.title,
         "text": result.text,
         **result.metadata,
     }
-    if result.error:
-        out["error"] = result.error
-    return out
+
+
+def _fail_reason(result: FetchResult) -> str:
+    """failed / login_required 상태의 이슈 라벨링용 사유 메시지."""
+    if result.status == "login_required":
+        return result.error or "login required"
+    return result.error or f"fetch status: {result.status}"
 
 
 # ─────────────────────────────────────────────────────────────
@@ -122,7 +130,8 @@ def _run_issues_mode(dry_run: bool) -> None:
         source = _infer_source(url)
         captured_at = issue.created_at
 
-        extracted = extract_content(url, source)
+        result = fetchers.dispatch(url, source)
+        extracted = _result_to_extracted(result)
         caption = validate_user_caption(issue.user_caption)
         if caption:
             extracted["user_caption"] = caption
@@ -136,21 +145,29 @@ def _run_issues_mode(dry_run: bool) -> None:
         )
 
         if dry_run:
-            log.info("[dry-run] #%d id=%s title=%s", issue.number, item.id, item.title[:40])
+            log.info(
+                "[dry-run] #%d id=%s status=%s title=%s",
+                issue.number, item.id, result.status, item.title[:40],
+            )
             continue
 
-        if extracted.get("error"):
-            log.warning("추출 실패 #%d: %s", issue.number, extracted["error"])
-            github_inbox.label_issue_failed(issue.number, extracted["error"])
+        if result.status not in _SAVE_STATUSES:
+            reason = _fail_reason(result)
+            log.warning("추출 실패 #%d status=%s: %s", issue.number, result.status, reason)
+            github_inbox.label_issue_failed(issue.number, reason)
             continue
 
-        save_raw(item, extracted)
+        save_raw(item, extracted, fetch_status=result.status)
         add_raw_stub(item)
+        note = " (자막 없음 — description 폴백)" if result.status == "no_transcript" else ""
         github_inbox.close_issue(
             issue.number,
-            f"✅ 수집 완료 — id={item.id}, source={item.source}",
+            f"✅ 수집 완료 — id={item.id}, source={item.source}{note}",
         )
-        log.info("raw 저장 + 이슈 close: #%d → id=%s", issue.number, item.id)
+        log.info(
+            "raw 저장 + 이슈 close: #%d → id=%s status=%s",
+            issue.number, item.id, result.status,
+        )
 
 
 def _run_file_mode(dry_run: bool) -> None:
@@ -195,7 +212,8 @@ def _run_file_mode(dry_run: bool) -> None:
             timespec="seconds"
         )
 
-        extracted = extract_content(url, source)
+        result = fetchers.dispatch(url, source)
+        extracted = _result_to_extracted(result)
         caption = validate_user_caption(b.get("user_caption"))
         if caption:
             extracted["user_caption"] = caption
@@ -210,14 +228,23 @@ def _run_file_mode(dry_run: bool) -> None:
         )
 
         if dry_run:
-            log.info("[dry-run] 저장 스킵 id=%s title=%s", item.id, item.title[:40])
+            log.info(
+                "[dry-run] 저장 스킵 id=%s status=%s title=%s",
+                item.id, result.status, item.title[:40],
+            )
             processed_raws.append(b["_raw"])
             continue
 
-        save_raw(item, extracted)
+        if result.status not in _SAVE_STATUSES:
+            reason = _fail_reason(result)
+            log.warning("추출 실패 id=%s status=%s: %s", item.id, result.status, reason)
+            failed_raws.append(b["_raw"])
+            continue
+
+        save_raw(item, extracted, fetch_status=result.status)
         add_raw_stub(item)
         processed_raws.append(b["_raw"])
-        log.info("raw 저장 id=%s source=%s", item.id, item.source)
+        log.info("raw 저장 id=%s source=%s status=%s", item.id, item.source, result.status)
 
     if dry_run:
         log.info("[dry-run] inbox.md 비우기 스킵.")

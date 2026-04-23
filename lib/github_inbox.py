@@ -1,7 +1,8 @@
 """GitHub Issues를 inbox로 사용.
 
-iOS Shortcut이 이슈를 만들고 (title=URL, body=클립보드 캡션, label=inbox),
-ingester가 이슈를 읽어 처리한 뒤 close 한다.
+iOS Shortcut 이 이슈를 만들고 (title=URL, body=캡션 OCR 텍스트, label=inbox),
+ingester 가 이슈를 읽어 처리한 뒤 close 한다. body 는 비어 있을 수 있다
+(공유 대상이 IG 가 아니거나 사용자가 OCR 단계를 생략한 경우).
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ API = "https://api.github.com"
 class InboxIssue:
     number: int
     url: str            # 이슈 title이 곧 캡처된 URL
-    user_caption: str   # body — 공유 시점 클립보드 캡션 (검증 전 원문)
+    user_caption: str   # body — 공유 시점 캡션 OCR 텍스트 (검증 전 원문, 빈 문자열 허용)
     created_at: str     # ISO8601
 
 

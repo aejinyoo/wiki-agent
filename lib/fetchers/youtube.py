@@ -8,8 +8,9 @@
     5. en/en-US/en-GB 자동 생성
     6. 그 외 언어 자동 생성 (첫 발견)
 
-자막이 있으면 60초 단위 문단으로 묶어 `text` 로 반환.
-자막이 없으면 yt_dlp description 으로 폴백하고 `status="no_transcript"`.
+자막이 있으면 60초 단위 문단으로 묶어 `text` 로 반환하고 `status="ok"`.
+자막이 없으면 yt_dlp description 으로 폴백하고 `status="no_transcript"` —
+ingester 가 저장 루트로 태우되 degraded 플래그는 raw payload 의 fetch_status 에 보존.
 video ID 추출 실패 등 치명적 오류만 `status="failed"`.
 """
 
@@ -176,11 +177,10 @@ def fetch(url: str) -> FetchResult:
                 **base_metadata,
                 "language": language,
                 "has_transcript": True,
-                "fetch_status": "ok",
             },
         )
 
-    # 자막 없음 → description 폴백 (error 비워서 ingester가 정상 저장 루트로)
+    # 자막 없음 → description 폴백. ingester 는 status="no_transcript" 를 저장 루트로 분기.
     description = meta.get("description", "") or ""
     return FetchResult(
         status="no_transcript",
@@ -189,6 +189,5 @@ def fetch(url: str) -> FetchResult:
         metadata={
             **base_metadata,
             "has_transcript": False,
-            "fetch_status": "no_transcript",
         },
     )
