@@ -115,18 +115,40 @@ def _compose_body(body_ko: str, original_text: str) -> str:
     return "\n\n".join(parts)
 
 
+def _has_classifiable_signal(extracted: dict) -> bool:
+    """LLM 호출 전에 분류에 쓸 신호가 하나라도 있는지 검사.
+
+    URL + 빈 TITLE + 빈 본문 + 빈 USER_CAPTION 으로 Flash-Lite 를 호출하면
+    개인화 컨텍스트에만 의존해 환각을 만든다 (2026-04-23 사건).
+    text_cleaned / text / title / user_caption 중 하나라도 의미 있으면 True.
+    """
+    text = (extracted.get("text_cleaned") or extracted.get("text") or "").strip()
+    title = (extracted.get("title") or "").strip()
+    caption = (extracted.get("user_caption") or "").strip()
+    return bool(text or title or caption)
+
+
 def classify_one(raw_path: Path, system: str) -> WikiItem | None:
+    """1건 분류. 성공 시 WikiItem, 스킵(빈 입력)이면 None.
+
+    TokenCapExceeded 는 잡지 않고 호출자에게 전파 — 루프 전체 중단 신호.
+    스킵된 raw 는 그대로 두어 다음 실행에서 재처리 가능한 상태를 유지한다.
+    """
     payload = load_raw(raw_path)
     item_data = payload["item"]
     extracted = payload.get("extracted", {})
 
+    if not _has_classifiable_signal(extracted):
+        log.warning(
+            "빈 입력 스킵 %s — title/text/user_caption 모두 비어 LLM 호출 생략 "
+            "(fetch_status=%s). raw 는 유지되어 재수집 후 재분류 가능.",
+            raw_path.name, payload.get("fetch_status"),
+        )
+        return None
+
     user = _build_user(item_data, extracted)
 
-    try:
-        result = claude.call_haiku(system=system, user=user, max_tokens=2000)
-    except claude.TokenCapExceeded as e:
-        log.warning("토큰 캡: %s", e)
-        return None
+    result = claude.call_haiku(system=system, user=user, max_tokens=2000)
 
     parsed = _parse_classifier_output(result.text)
 
@@ -167,6 +189,7 @@ def run(limit: int | None = None, dry_run: bool = False) -> None:
     system = _build_system(personal_context)
 
     processed = 0
+    skipped = 0
     for raw_path in iter_unclassified_raw():
         if processed >= cap:
             log.info("일일 캡(%d) 도달, 중단.", cap)
@@ -178,9 +201,16 @@ def run(limit: int | None = None, dry_run: bool = False) -> None:
             processed += 1
             continue
 
-        item = classify_one(raw_path, system)
+        try:
+            item = classify_one(raw_path, system)
+        except claude.TokenCapExceeded as e:
+            log.warning("토큰 캡: %s", e)
+            break
+
         if item is None:
-            break  # 토큰 캡 초과
+            # 빈 입력 등으로 스킵됨 — raw 는 그대로 두어 재분류 가능한 상태 유지
+            skipped += 1
+            continue
 
         out = write_wiki_item(item)
         log.info("저장: %s", out.relative_to(paths.WIKI_REPO))
@@ -192,7 +222,7 @@ def run(limit: int | None = None, dry_run: bool = False) -> None:
 
         processed += 1
 
-    log.info("완료: 처리 %d건", processed)
+    log.info("완료: 처리 %d건 · 스킵 %d건", processed, skipped)
 
 
 def main() -> None:

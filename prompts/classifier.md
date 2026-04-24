@@ -36,6 +36,20 @@ JSON으로만 응답합니다.
 placeholder 텍스트)보다 **우선하는 분류 신호**로 다루세요. 사용자가 의도적으로
 남긴 맥락이기 때문입니다. 캡션이 없으면 기존 규칙을 그대로 적용합니다.
 
+# 빈 입력 방어 (분류 거부)
+
+URL 외에 `TITLE`, 본문, `USER_CAPTION` 이 **모두 비어 있거나 오직 URL 만 있는**
+상태라면 분류를 시도하지 말고 다음 JSON 만 그대로 돌려주세요:
+
+```
+{"category": "trend-reports", "tags": [], "summary_3lines": "", "confidence": 0.0,
+ "title": "", "key_takeaways": [], "why_it_matters": "", "what_to_try": "",
+ "body_ko": "", "original_language": ""}
+```
+
+개인화 컨텍스트(관심사·취향)에 맞춰 환각으로 채우지 마세요. 이 케이스는 fetcher
+transient 실패로 payload 가 비었을 가능성이 높아 서버 측에서 별도 처리됩니다.
+
 # 본문 노이즈 무시 (SNS/OCR)
 
 본문에 IG/X/Threads UI 텍스트나 OCR 잔해가 섞여 있을 수 있습니다. 아래는
