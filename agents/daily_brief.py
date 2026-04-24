@@ -228,6 +228,16 @@ def _generate_one(target: dt.date, dry_run: bool, force: bool) -> bool:
         log.exception("브리프 생성 실패")
         content = _fallback_brief_for(target, str(e))
 
+    if not content:
+        # LLM 이 예외 없이 빈 응답을 돌려주는 케이스 방어 (2026-04-24 빈 파일 사건).
+        # TokenCapExceeded 와 동일하게 fallback 으로 치환 — 빈 파일이 덮어쓰는 것보다
+        # 명시적 실패 문구가 디버깅·사용자 인지에 유리.
+        log.warning(
+            "LLM 빈 응답 — fallback 치환 target=%s items=%d user_prompt_len=%d",
+            target.isoformat(), len(items), len(user),
+        )
+        content = _fallback_brief_for(target, "LLM empty response")
+
     out_path.write_text(content + "\n", encoding="utf-8")
     log.info("브리프 저장: %s", out_path)
     return True
