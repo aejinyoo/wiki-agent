@@ -1,6 +1,6 @@
 # sns-fetchers
 
-**상태**: 구현 중 (10/10) · **업데이트**: 2026-04-23
+**상태**: 구현 중 (10/10 + transient 방어) · **업데이트**: 2026-04-24
 
 ## 요약
 SNS 공유 링크(X, Instagram, YouTube) 본문을 채널별 어댑터로 안정 수집하도록 ingester 파이프라인 재편. 기존 generic `requests + trafilatura`가 클라이언트 렌더링/로그인월에 막혀 로그인 페이지 HTML이 인덱스에 오염되던 문제 해결.
@@ -9,6 +9,59 @@ SNS 공유 링크(X, Instagram, YouTube) 본문을 채널별 어댑터로 안정
 **Out of scope**: Threads, IG 로그인 크롤링, Whisper 전사, wiki-site UI.
 
 ## 진행
+
+### 2026-04-24 — transient 실패 → 영구 오염 방지 (Task A~E)
+**배경**: 2026-04-23 YouTube 영상 1건(`pnJOd5H5Zsc`, 실제로는 포토샵 보정 강좌)이
+수집 시점에 빈 payload 로 저장되어 classifier 가 "AI 기반 개인화된 학습 경험 디자인"
+으로 환각 분류 → 위키 md + 인덱스 + raw-archive 에 영구 오염. 4/24 daily brief
+는 LLM 이 빈 문자열 응답으로 1바이트 빈 파일 덮어쓰기.
+
+- **Task A** (`cc9b5b6`) `lib/fetchers/youtube.py` 에러 가시화 + 1회 재시도
+  - `_fetch_metadata_once` / `_fetch_transcript_once` 로 분리해 각 단계 실패 사유를
+    warning 로그 + 반환값에 명시 (bare `except Exception` 블랙박스 제거)
+  - 두 단계 모두 `_RETRY_BACKOFF_SEC=0.75` 후 1회 재시도 — Actions 러너 IP flake /
+    YouTube 일시 rate-limit 대비. 2회 연속 실패만 최종 실패로 간주.
+  - metadata 재시도도 실패 + title/text 모두 빈 경우 `status="failed"` 로 강등.
+    transient transcript 실패도 `no_transcript` 대신 `failed` 로 강등 — downstream
+    이 "분류 대상 있음"으로 오해하지 않도록.
+  - `"no_transcript"` (자막 실제 부재) 는 재시도 대상 아님 — 명시 분기.
+  - `tests/fetchers/test_youtube.py` +5 케이스 (19 → 24): 메타/자막 retry 성공,
+    transcript 2회 실패 강등, 빈 meta+no_transcript 강등, 진짜 no_transcript 유지
+- **Task B** (`8f2021d`) `agents/ingester.py` 빈 payload 가드
+  - 새 `_is_empty_payload(extracted)` / `_empty_payload_reason(result)` — status 가
+    `_SAVE_STATUSES` 라도 title/text/user_caption 모두 비면 저장 거부, failed 루트
+    로 이관(issues: `label_issue_failed`, file: `inbox-failed.md`). classifier 가
+    빈 본문으로 환각 분류하는 2차 방어선.
+  - `tests/test_ingester_status.py` +4 케이스 (13 → 17): 빈 no_transcript/빈 ok
+    거부, user_caption 있으면 저장 허용, file 모드 `inbox-failed` 이관
+- **Task C** (`d65c336`) `agents/classifier.py` 빈 입력 가드
+  - 새 `_has_classifiable_signal(extracted)` — text_cleaned/text/title/user_caption
+    중 하나라도 비공백이면 True. 모두 비면 `classify_one` 은 LLM 호출 없이 None
+    반환, raw 는 그대로 두어 재수집 후 재분류 가능 상태 유지.
+  - `classify_one` 이 `TokenCapExceeded` 를 더 이상 catch 하지 않고 전파 →
+    `run()` 이 외부에서 catch 해 루프 중단. None 은 "skip, 다음 raw 계속" 의미로
+    명확화. 완료 로그는 "처리 N건 · 스킵 M건" 표기.
+  - `prompts/classifier.md` 에 "빈 입력 방어(분류 거부)" 섹션 추가 — URL 만 있고
+    TITLE/본문/USER_CAPTION 모두 비면 null JSON 반환하도록 2차 방어선.
+  - 신규 `tests/test_classifier_guard.py` 8 케이스: signal 휴리스틱 단위 5개 +
+    빈 입력 LLM 미호출, run() skip-and-continue, TokenCapExceeded 전파
+- **Task D** (`ce0d43b`) `agents/daily_brief.py` 빈 응답 가드
+  - `_generate_one` 에서 Sonnet 응답 strip 후 빈 문자열이면 `_fallback_brief_for
+    (target, "LLM empty response")` 로 치환 + warning 로그 (target/items 수/
+    user_prompt 길이 동반). `lib.llm._generate` 의 `resp.text or ""` 을 1바이트
+    빈 파일로 덮어쓰는 경로 차단.
+  - 신규 `tests/test_daily_brief_empty.py` 4 케이스: 빈 응답 → fallback, 공백-only
+    → fallback, 정상 응답 그대로, TokenCapExceeded fallback 회귀
+- **Task E** 오염 데이터 정리 + 재수집
+  - `scripts/retry.py url "https://youtube.com/watch?v=pnJOd5H5Zsc..."` 실행 →
+    `_index.json` 엔트리 + `raw-archive/2026-04/72d39dcc3944.json` + `wiki/ai-ux-
+    patterns/2026-04-23-ai-기반-개인화된-학습-경험-디자인.md` 제거, `_stats.json`
+    재계산.
+  - `wiki/daily/2026-04-24.md`(1 byte) 삭제 후 `daily_brief.py --force --no-catchup`
+    재실행 → 650 bytes 정상 브리프. Task D 가드 로컬 적용된 상태에서 실행.
+  - 라이브 재수집 베이스라인 확인: `fetch("...pnJOd5H5Zsc...")` → status=ok, title=
+    "[#니손도돼요] 포토샵 강좌 : 보정으로 소프트 필터 효과내기", text 2569자, language=ko
+- 전체 단위 81/81 통과 (이전 65 → 81 +16)
 
 ### 2026-04-23 (3)
 - **Task 5** `transcript_cleanup` 에이전트 신설 — YouTube 자막을 Gemini Flash-Lite 로 prose 정제
@@ -60,11 +113,29 @@ SNS 공유 링크(X, Instagram, YouTube) 본문을 채널별 어댑터로 안정
 
 ## 다음
 - [ ] **Shortcut 변경(사용자)**: IG URL 공유 직전 캡션 영역 스크린샷 → Shortcut 이 "최근 사진 1장" → OCR → 이슈 body 에 동봉. iOS IG 앱은 캡션 직접 복사 불가 (2026-04-23 결정 참고)
-- [ ] **Task 2 + Task 5 통합 스모크**: 실 YouTube URL 로 파이프라인 한 바퀴 — `ingester → transcript_cleanup → classifier` 순서로 raw JSON 에 `text`/`text_cleaned`/`cleaned` 필드가 제대로 쌓이는지, classifier 가 `text_cleaned` 를 소비하는지 확인
+- [ ] **Task 2 + Task 5 통합 스모크**: 실 YouTube URL 로 파이프라인 한 바퀴 — `ingester → transcript_cleanup → classifier` 순서로 raw JSON 에 `text`/`text_cleaned`/`cleaned` 필드가 제대로 쌓이는지, classifier 가 `text_cleaned` 를 소비하는지 확인 (2026-04-24 기준: 오염 영상 재수집 필요 — 사용자가 같은 URL 다시 공유하면 자동 처리됨)
 - [x] **Task 5** transcript_cleanup 에이전트 (2026-04-23)
 - [x] **Task 6** ingester status 기반 분기 (2026-04-23)
+- [x] **Task A~E** transient 실패 → 영구 오염 방지 다층 방어 (2026-04-24)
 
 ## 결정
+
+### 2026-04-24: transient 실패는 로깅+재시도, 빈 payload 는 저장 거부, 오염 raw 는 retry 가능 상태 유지 (Task A~D 원칙)
+- **transient 실패 처리**: fetcher 내부에서만 짧은 backoff 1회 재시도 (YouTube rate-
+  limit 자극 방지). 재시도 후에도 실패면 `status="failed"` 로 강등하고 `error`
+  필드에 실패 사유를 사람이 읽을 수 있는 문자열로 기록. "말없이 삼키기" 금지 —
+  warning 로그 + 반환값에 전부 반영.
+- **빈 payload 저장 거부 (다층 방어)**: ingester 는 status 화이트리스트만 믿지 말고
+  title/text/user_caption 셋 중 하나라도 있는지 추가 검사. classifier 는 또 한번
+  같은 검사로 LLM 호출을 스킵. 프롬프트에도 3차 방어선(빈 입력 → null JSON)을
+  명시. 단일 레이어 실패가 환각으로 빠지지 않도록 세 개 다 둔다.
+- **오염 raw 는 retry 가능 상태 유지**: 빈 입력으로 스킵되는 raw 는 `raw-archive/`
+  가 아니라 `raw/` 에 남겨두어 `scripts/retry.py` 또는 다음 ingester 실행에서
+  재처리할 수 있게 한다. raw 를 archive 로 옮기는 것은 **성공적으로 분류된 경우만**.
+- **LLM 빈 응답은 예외와 같은 등급**: Gemini 가 예외 없이 빈 문자열을 반환하는
+  경로가 존재 (`resp.text or ""`). daily_brief 등 최종 쓰기 직전에 한 번 더
+  `content.strip() == ""` 체크해서 fallback 으로 치환. 1바이트 빈 파일이
+  production 에 저장되는 것이 가장 디버깅 어려운 실패.
 
 ### 2026-04-23: transcript_cleanup 은 원문 덮어쓰지 않고 text_cleaned 병기 (Task 5)
 - 선택지: (a) `extracted.text` 덮어쓰기 — 저장 용량 절약 (b) `text_cleaned` 추가 — 원문 보존. **(b) 채택.**
@@ -111,5 +182,5 @@ SNS 공유 링크(X, Instagram, YouTube) 본문을 채널별 어댑터로 안정
 
 ## 링크
 - `lib/fetchers/`, `lib/wiki_io.py`, `lib/user_caption.py`, `lib/github_inbox.py`, `agents/ingester.py`, `agents/classifier.py`, `prompts/classifier.md`, `scripts/retry.py`, `tests/test_url_hash.py`, `tests/test_retry_by_source.py`, `tests/test_user_caption.py`
-- 커밋: `28ecbd0`, `ad604ad`, `bb30283`, `3130645`, `5668adf`, `76d3423`
+- 커밋: `28ecbd0`, `ad604ad`, `bb30283`, `3130645`, `5668adf`, `76d3423`, `cc9b5b6`, `8f2021d`, `d65c336`, `ce0d43b`
 - 참고 스킬: `.claude/skills/youtube-transcript/` (Task 2 포팅 대상)
