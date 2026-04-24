@@ -11,14 +11,26 @@
 자막이 있으면 60초 단위 문단으로 묶어 `text` 로 반환하고 `status="ok"`.
 자막이 없으면 yt_dlp description 으로 폴백하고 `status="no_transcript"` —
 ingester 가 저장 루트로 태우되 degraded 플래그는 raw payload 의 fetch_status 에 보존.
-video ID 추출 실패 등 치명적 오류만 `status="failed"`.
+video ID 추출 실패·메타/자막 둘 다 실패한 빈 payload 는 `status="failed"`.
+
+Transient 실패 방어:
+  - metadata / transcript 각 단계에서 예외는 warning 으로 기록(원인 가시화).
+  - 각 단계는 1회 backoff 재시도 (GitHub Actions 러너 IP flake / 일시 rate-limit 대비).
+  - 두 번 연속 실패하고 폴백도 없으면 최종 failed 로 강등.
 """
 
 from __future__ import annotations
 
+import logging
 import re
+import time
 
 from .base import FetchResult
+
+log = logging.getLogger(__name__)
+
+# transient 재시도: 1회만 — YouTube rate-limit 을 자극하지 않기 위해 얕게.
+_RETRY_BACKOFF_SEC = 0.75
 
 _VIDEO_ID_PATTERNS = [
     re.compile(
@@ -37,12 +49,12 @@ def _extract_video_id(url: str) -> str | None:
     return None
 
 
-def _fetch_metadata(url: str) -> dict:
-    """yt_dlp 로 제목·채널·설명·duration 추출. 실패 시 빈 dict."""
+def _fetch_metadata_once(url: str) -> tuple[dict, str | None]:
+    """yt_dlp 1회 시도. (meta, error). 성공 시 error=None."""
     try:
         import yt_dlp  # type: ignore
-    except ImportError:
-        return {}
+    except ImportError as e:
+        return {}, f"yt_dlp import 실패: {e}"
     opts = {
         "quiet": True,
         "skip_download": True,
@@ -52,14 +64,32 @@ def _fetch_metadata(url: str) -> dict:
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=False)
-    except Exception:  # noqa: BLE001
-        return {}
+    except Exception as e:  # noqa: BLE001
+        return {}, f"{type(e).__name__}: {e}"
     return {
         "title": info.get("title") or "",
         "description": (info.get("description") or "")[:20000],
         "channel": info.get("channel") or "",
         "duration": info.get("duration"),
-    }
+    }, None
+
+
+def _fetch_metadata(url: str) -> tuple[dict, str | None]:
+    """yt_dlp 로 제목·채널·설명·duration 추출. 1회 재시도.
+
+    반환: (meta_dict, error_or_None). 빈 meta 는 `{}` — 호출부에서 빈 dict 로 취급 가능.
+    """
+    meta, err = _fetch_metadata_once(url)
+    if err is None:
+        return meta, None
+    log.warning("yt_dlp metadata 1차 실패 url=%s err=%s — 재시도", url, err)
+    time.sleep(_RETRY_BACKOFF_SEC)
+    meta, err2 = _fetch_metadata_once(url)
+    if err2 is None:
+        return meta, None
+    combined = f"{err} | retry: {err2}"
+    log.warning("yt_dlp metadata 재시도도 실패 url=%s err=%s", url, combined)
+    return {}, combined
 
 
 def _group_snippets_by_60s(fetched) -> str:
@@ -125,32 +155,59 @@ def _pick_transcript(transcript_list):
     return None, None
 
 
-def _fetch_transcript(video_id: str) -> tuple[str, str] | None:
-    """자막 추출. 성공 시 (plain_text, language), 실패 시 None."""
+def _fetch_transcript_once(video_id: str) -> tuple[tuple[str, str] | None, str | None]:
+    """자막 추출 1회 시도. 성공 시 ((plain, language), None), 실패 시 (None, error).
+
+    `_no_transcript_available` 같은 "자막이 진짜로 없다"는 신호는 error="no_transcript"
+    로 구별해 반환 — 호출부에서 이건 재시도 대상이 아님을 판단할 수 있게.
+    """
     try:
         from youtube_transcript_api import YouTubeTranscriptApi  # type: ignore
-    except ImportError:
-        return None
+    except ImportError as e:
+        return None, f"youtube_transcript_api import 실패: {e}"
 
     try:
         ytt_api = YouTubeTranscriptApi()
         transcript_list = ytt_api.list(video_id)
-    except Exception:  # noqa: BLE001
-        return None
+    except Exception as e:  # noqa: BLE001
+        return None, f"list() 실패: {type(e).__name__}: {e}"
 
     transcript, language = _pick_transcript(transcript_list)
     if transcript is None or language is None:
-        return None
+        return None, "no_transcript"
 
     try:
         fetched = transcript.fetch()
-    except Exception:  # noqa: BLE001
-        return None
+    except Exception as e:  # noqa: BLE001
+        return None, f"fetch() 실패: {type(e).__name__}: {e}"
 
     plain = _group_snippets_by_60s(fetched)
     if not plain:
-        return None
-    return plain, language
+        return None, "empty_after_grouping"
+    return (plain, language), None
+
+
+def _fetch_transcript(video_id: str) -> tuple[tuple[str, str] | None, str | None]:
+    """자막 추출. 1회 재시도. 성공 시 ((plain, language), None), 실패 시 (None, error).
+
+    error == "no_transcript" 는 "이 영상엔 자막 자체가 없다" — 재시도하지 않음.
+    그 외(네트워크·파싱 등 transient 의심)는 1회 backoff 재시도.
+    """
+    result, err = _fetch_transcript_once(video_id)
+    if err is None:
+        return result, None
+    if err == "no_transcript":
+        # 자막이 실제로 없는 경우 — 재시도 의미 없음
+        return None, err
+
+    log.warning("transcript 1차 실패 video_id=%s err=%s — 재시도", video_id, err)
+    time.sleep(_RETRY_BACKOFF_SEC)
+    result2, err2 = _fetch_transcript_once(video_id)
+    if err2 is None:
+        return result2, None
+    combined = f"{err} | retry: {err2}"
+    log.warning("transcript 재시도도 실패 video_id=%s err=%s", video_id, combined)
+    return None, combined
 
 
 def fetch(url: str) -> FetchResult:
@@ -158,8 +215,11 @@ def fetch(url: str) -> FetchResult:
     if not video_id:
         return FetchResult(status="failed", error=f"video ID 추출 실패: {url}")
 
-    meta = _fetch_metadata(url)
-    transcript = _fetch_transcript(video_id)
+    meta, meta_err = _fetch_metadata(url)
+    transcript, transcript_err = _fetch_transcript(video_id)
+
+    title = meta.get("title", "") or ""
+    description = meta.get("description", "") or ""
 
     base_metadata: dict = {
         "video_id": video_id,
@@ -167,11 +227,12 @@ def fetch(url: str) -> FetchResult:
         "duration": meta.get("duration"),
     }
 
+    # 성공 경로 — 자막이 있으면 여기로
     if transcript is not None:
         plain, language = transcript
         return FetchResult(
             status="ok",
-            title=meta.get("title", "") or "",
+            title=title,
             text=plain,
             metadata={
                 **base_metadata,
@@ -180,11 +241,37 @@ def fetch(url: str) -> FetchResult:
             },
         )
 
-    # 자막 없음 → description 폴백. ingester 는 status="no_transcript" 를 저장 루트로 분기.
-    description = meta.get("description", "") or ""
+    # 자막이 없거나 실패. 메타도 없고 자막도 없으면 failed 로 강등 — transient
+    # 장애가 빈 payload 로 저장 루트에 오르는 걸 막는다 (4/23 환각 오염 재현 차단).
+    is_real_no_transcript = transcript_err == "no_transcript"
+    if meta_err is not None and not title and not description:
+        reason_meta = meta_err
+        reason_transcript = (
+            "no_transcript" if is_real_no_transcript else (transcript_err or "unknown")
+        )
+        return FetchResult(
+            status="failed",
+            error=(
+                f"metadata: {reason_meta}; transcript: {reason_transcript}"
+            ),
+            metadata=base_metadata,
+        )
+
+    # 메타는 있지만 자막이 transient 실패한 케이스도 failed 로 강등.
+    # description 폴백은 자막이 "진짜 없는" (no_transcript) 경우에만 허용한다 —
+    # transient 를 no_transcript 로 저장하면 downstream 이 분류 대상으로 오해.
+    if not is_real_no_transcript:
+        return FetchResult(
+            status="failed",
+            title=title,
+            error=f"transcript transient 실패: {transcript_err or 'unknown'}",
+            metadata=base_metadata,
+        )
+
+    # 여기까지 왔으면 진짜 자막 없음. description 폴백으로 no_transcript 저장.
     return FetchResult(
         status="no_transcript",
-        title=meta.get("title", "") or "",
+        title=title,
         text=description,
         metadata={
             **base_metadata,
