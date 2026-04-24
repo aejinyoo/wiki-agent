@@ -219,6 +219,101 @@ class TestFileModeStatusBranching(_IngesterTestBase):
         self.assertFalse((self.tmp / "inbox-failed.md").exists())
 
 
+class TestEmptyPayloadGuard(_IngesterTestBase):
+    """status 가 save 화이트리스트에 속해도 title/text 가 전부 비면 저장 거부.
+
+    2026-04-23 YouTube transient 실패 → fetch_status=no_transcript + 빈 payload
+    → classifier 환각 사건 회귀 방지.
+    """
+
+    def _issue(self, number: int = 1, url: str = "https://example.com/a"):
+        from lib.github_inbox import InboxIssue
+
+        return InboxIssue(
+            number=number,
+            url=url,
+            user_caption="",
+            created_at="2026-04-23T07:30:00Z",
+        )
+
+    def _run_issues_mode(self, fetch_result, issues=None):
+        if issues is None:
+            issues = [self._issue()]
+        gi = MagicMock()
+        gi.list_open_inbox_issues.return_value = issues
+        with patch.object(self.ingester, "github_inbox", gi), \
+             patch.object(self.ingester.fetchers, "dispatch", return_value=fetch_result):
+            self.ingester._run_issues_mode(dry_run=False)
+        return gi
+
+    def test_issues_mode_rejects_empty_no_transcript_payload(self) -> None:
+        """no_transcript + 빈 title·text 면 저장 없이 label_issue_failed."""
+        fr = self._fetch_result(
+            status="no_transcript",
+            title="",
+            text="",
+            metadata={"video_id": "abcdefghijk", "has_transcript": False},
+        )
+        gi = self._run_issues_mode(fr)
+        from lib.wiki_io import url_hash
+        item_id = url_hash("https://example.com/a")
+        self.assertFalse(self._raw_path(item_id).exists())
+        gi.label_issue_failed.assert_called_once()
+        reason = gi.label_issue_failed.call_args[0][1]
+        self.assertIn("empty payload", reason)
+        self.assertIn("no_transcript", reason)
+        gi.close_issue.assert_not_called()
+
+    def test_issues_mode_rejects_empty_ok_payload(self) -> None:
+        """status=ok 이라도 title/text/user_caption 모두 비면 저장 거부."""
+        fr = self._fetch_result(status="ok", title="", text="", metadata={})
+        gi = self._run_issues_mode(fr)
+        from lib.wiki_io import url_hash
+        item_id = url_hash("https://example.com/a")
+        self.assertFalse(self._raw_path(item_id).exists())
+        gi.label_issue_failed.assert_called_once()
+
+    def test_issues_mode_keeps_payload_when_user_caption_present(self) -> None:
+        """title·text 가 비어도 user_caption 이 있으면 분류 신호가 있으므로 저장."""
+        from lib.github_inbox import InboxIssue
+
+        fr = self._fetch_result(status="ok", title="", text="", metadata={})
+        issue = InboxIssue(
+            number=2,
+            url="https://example.com/b",
+            user_caption="매우 흥미로운 UX 실험",
+            created_at="2026-04-23T07:30:00Z",
+        )
+        self._run_issues_mode(fr, issues=[issue])
+        from lib.wiki_io import url_hash
+        item_id = url_hash("https://example.com/b")
+        self.assertTrue(self._raw_path(item_id).exists())
+        payload = self._load_raw(item_id)
+        self.assertEqual(payload["extracted"].get("user_caption"), "매우 흥미로운 UX 실험")
+
+    def test_file_mode_rejects_empty_payload_to_inbox_failed(self) -> None:
+        inbox = self.tmp / "inbox.md"
+        inbox.write_text(
+            "---\nurl: https://example.com/a\ncaptured_at: 2026-04-23T07:30:00+00:00\n---\n",
+            encoding="utf-8",
+        )
+        fr = self._fetch_result(
+            status="no_transcript",
+            title="",
+            text="",
+            metadata={"has_transcript": False},
+            error="metadata: boom; transcript: no_transcript",
+        )
+        with patch.object(self.ingester.fetchers, "dispatch", return_value=fr):
+            self.ingester._run_file_mode(dry_run=False)
+
+        from lib.wiki_io import url_hash
+        item_id = url_hash("https://example.com/a")
+        self.assertFalse(self._raw_path(item_id).exists())
+        failed_text = (self.tmp / "inbox-failed.md").read_text(encoding="utf-8")
+        self.assertIn("https://example.com/a", failed_text)
+
+
 class TestFailReasonHelper(_IngesterTestBase):
     """_fail_reason 단위 — 메시지 포맷 회귀."""
 

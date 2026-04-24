@@ -87,6 +87,27 @@ def _fail_reason(result: FetchResult) -> str:
     return result.error or f"fetch status: {result.status}"
 
 
+def _is_empty_payload(extracted: dict) -> bool:
+    """status 가 저장-허용이어도 title/text/user_caption 모두 빈 경우를 감지.
+
+    이런 payload 가 저장 루트에 오르면 classifier 가 URL+빈 본문만으로
+    환각을 생성한다 (2026-04-23 오염 사건 재현). 저장 거부하고 failed 루트로
+    이관하는 것이 안전하다.
+    """
+    title = (extracted.get("title") or "").strip()
+    text = (extracted.get("text") or "").strip()
+    caption = (extracted.get("user_caption") or "").strip()
+    return not (title or text or caption)
+
+
+def _empty_payload_reason(result: FetchResult) -> str:
+    """빈 payload 저장 거부 시 이슈 라벨 / inbox-failed 에 기록할 사유."""
+    base = f"empty payload (status={result.status})"
+    if result.error:
+        return f"{base} — fetcher_error: {result.error}"
+    return base
+
+
 # ─────────────────────────────────────────────────────────────
 # 실행 본체
 # ─────────────────────────────────────────────────────────────
@@ -154,6 +175,13 @@ def _run_issues_mode(dry_run: bool) -> None:
         if result.status not in _SAVE_STATUSES:
             reason = _fail_reason(result)
             log.warning("추출 실패 #%d status=%s: %s", issue.number, result.status, reason)
+            github_inbox.label_issue_failed(issue.number, reason)
+            continue
+
+        if _is_empty_payload(extracted):
+            reason = _empty_payload_reason(result)
+            log.warning("빈 payload 저장 거부 #%d status=%s: %s",
+                        issue.number, result.status, reason)
             github_inbox.label_issue_failed(issue.number, reason)
             continue
 
@@ -238,6 +266,13 @@ def _run_file_mode(dry_run: bool) -> None:
         if result.status not in _SAVE_STATUSES:
             reason = _fail_reason(result)
             log.warning("추출 실패 id=%s status=%s: %s", item.id, result.status, reason)
+            failed_raws.append(b["_raw"])
+            continue
+
+        if _is_empty_payload(extracted):
+            reason = _empty_payload_reason(result)
+            log.warning("빈 payload 저장 거부 id=%s status=%s: %s",
+                        item.id, result.status, reason)
             failed_raws.append(b["_raw"])
             continue
 
