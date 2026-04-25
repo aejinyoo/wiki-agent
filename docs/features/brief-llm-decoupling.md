@@ -325,9 +325,11 @@ cd /Users/aejin/wiki-agent && uv run pytest tests/ -v
 ## 진행
 
 - 2026-04-25: Step 1 완료 (`e2d668c`) — `lib/llm.py::_generate` 에 usage + finish_reason INFO 로깅, non-STOP 시 WARNING 추가. 기존 `call_haiku`/`call_sonnet` 시그니처 변경 없음. 전체 pytest 111 통과. 검증 호출에서 root cause 재현됨: `max_tokens=100` 호출 시 `thoughts_tokens=97, candidates_tokens=0, finish_reason=MAX_TOKENS` → 4/24 brief 절단 메커니즘 그대로 확인.
+- 2026-04-25: Step 2 완료 (이 커밋) — `agents/daily_brief.py` 에 `_filter_recent`, `_score`, `_pick_highlights` 3개 헬퍼 추가 (spec 은 "4개" 라 적혀 있으나 명시 시그니처 3개에 맞춤). `_score` = `confidence` 기본 0.5, 비정상 값도 0.5 로 안전 fallback. `_pick_highlights` 는 mutate 없이 필터+점수 정렬+"3개 모두 동일 카테고리" 만 차순위 교체. 스모크 — `x×3, y, z` 에서 top3 [a,c,d] 원형 유지; `x×3, y` 에서 [a,b,d] 로 y 끌어올림. pytest 111 통과.
 
 - [x] Step 1: 진단 로깅
-- [ ] Step 2: 점수·필터·다양성 헬퍼
+- [x] Step 2: 점수·필터·다양성 헬퍼
+- [ ] Step 3: 마크다운 조립 헬퍼
 - [ ] Step 3: 마크다운 조립 헬퍼
 - [ ] Step 4: 시스템 프롬프트 압축
 - [ ] Step 5: 메인 흐름 리팩터링

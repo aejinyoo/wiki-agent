@@ -117,6 +117,50 @@ def _recent_brief_highlights(target: dt.date, days: int = 7) -> list[dict]:
     return out
 
 
+def _filter_recent(items: list[dict], recent_urls: set[str]) -> list[dict]:
+    """최근 7일 추천 URL 과 겹치는 아이템 제외."""
+    return [it for it in items if it.get("url") not in recent_urls]
+
+
+def _score(it: dict) -> float:
+    """1차 점수 = confidence (없으면 0.5).
+    추후 personal_fit, tag_freshness 곱셈 추가 예정."""
+    conf = it.get("confidence")
+    if not conf:
+        return 0.5
+    try:
+        return float(conf)
+    except (TypeError, ValueError):
+        return 0.5
+
+
+def _pick_highlights(
+    items: list[dict], recent_urls: set[str], top_n: int = 3
+) -> list[dict]:
+    """필터 + 점수 정렬 + 다양성 가드 적용해 top_n 개 반환.
+
+    다양성 가드: 후보 중 점수 상위 top_n 을 단순 추출했을 때
+    모두 같은 카테고리면, 차순위에서 다른 카테고리 1개를 끌어와 교체.
+    교체 후보가 없으면 그대로 둠 (억지 다양화 X).
+    """
+    filtered = _filter_recent(items, recent_urls)
+    ranked = sorted(filtered, key=_score, reverse=True)
+    picks = ranked[:top_n]
+
+    if len(picks) < top_n or top_n < 2:
+        return picks
+
+    categories = {p.get("category") for p in picks}
+    if len(categories) > 1:
+        return picks
+
+    only_cat = next(iter(categories))
+    for cand in ranked[top_n:]:
+        if cand.get("category") != only_cat:
+            return picks[:-1] + [cand]
+    return picks
+
+
 def _build_user_for_date(
     target: dt.date,
     items: list[dict],

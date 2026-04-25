@@ -28,9 +28,9 @@
 
 ### brief-llm-decoupling
 - 파일: `docs/features/brief-llm-decoupling.md`
-- 상태: Step 1 완료 (1/7)
+- 상태: Step 2 완료 (2/7)
 - 업데이트: 2026-04-25
-- 다음: Step 2 — 점수·필터·다양성 헬퍼 (`agents/daily_brief.py`)
+- 다음: Step 3 — 마크다운 조립 헬퍼 (`agents/daily_brief.py`)
 
 ## 다음 예정 (착수 전)
 
