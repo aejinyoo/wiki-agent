@@ -11,6 +11,7 @@ import argparse
 import datetime as dt
 import logging
 import re
+from urllib.parse import urlparse
 
 import _bootstrap
 
@@ -159,6 +160,105 @@ def _pick_highlights(
         if cand.get("category") != only_cat:
             return picks[:-1] + [cand]
     return picks
+
+
+# ─────────────────────────────────────────────────────────────
+# 마크다운 조립 (섹션별 Python 렌더링)
+# ─────────────────────────────────────────────────────────────
+
+_WEEKDAY_KO = ["월", "화", "수", "목", "금", "토", "일"]
+
+_DIFF_EASY_KW = ("방문", "확인", "저장", "계정", "체험", "구독")
+_DIFF_HARD_KW = ("구축", "제작", "개발", "풀스택", "파이프라인")
+
+
+def _classify_difficulty(what_to_try: str) -> str:
+    """⭐/⭐⭐/⭐⭐⭐ 분류 (휴리스틱)."""
+    s = (what_to_try or "").strip()
+    if any(kw in s for kw in _DIFF_HARD_KW) or len(s) > 200:
+        return "⭐⭐⭐"
+    if any(kw in s for kw in _DIFF_EASY_KW) or len(s) < 60:
+        return "⭐"
+    return "⭐⭐"
+
+
+def _difficulty_eta(stars: str) -> str:
+    return {"⭐": "30m", "⭐⭐": "1h", "⭐⭐⭐": "3h+"}.get(stars, "1h")
+
+
+def _source_host(url: str) -> str:
+    try:
+        host = (urlparse(url).hostname or "").lower()
+    except ValueError:
+        return ""
+    if host.startswith("www."):
+        host = host[4:]
+    return host
+
+
+def _render_header(target: dt.date) -> str:
+    return f"# Daily Design Brief — {target.isoformat()} ({_WEEKDAY_KO[target.weekday()]})"
+
+
+def _render_highlights(picks: list[dict]) -> str:
+    head = "## 📌 하이라이트 (어제 수집분)"
+    if not picks:
+        return f"{head}\n\n(어제 수집분 없음)"
+
+    blocks: list[str] = [head]
+    for i, p in enumerate(picks, 1):
+        title = p.get("title", "") or "(제목 없음)"
+        url = p.get("url", "") or ""
+        category = p.get("category", "-") or "-"
+        host = _source_host(url) or "-"
+        tags = (p.get("tags") or [])[:2]
+        tag_str = " ".join(f"`{t}`" for t in tags)
+        meta = f"- **{category}** · **{host}**"
+        if tag_str:
+            meta += f" · {tag_str}"
+        why = (p.get("why_it_matters") or "").strip()
+        what = (p.get("what_to_try") or "").strip()
+        card = [
+            f"### {i}. [{title}]({url})",
+            meta,
+            f"- 왜 봐야 하나: {why}" if why else "- 왜 봐야 하나: -",
+            f"- 해볼 것: {what}" if what else "- 해볼 것: -",
+        ]
+        blocks.append("\n".join(card))
+    return "\n\n".join(blocks)
+
+
+def _render_experiments(picks: list[dict]) -> str:
+    head = "## 🧪 오늘 해볼 만한 실험 (Top 3)"
+    rows: list[tuple[str, str, str, str]] = []
+    for p in picks:
+        what = (p.get("what_to_try") or "").strip()
+        if not what:
+            continue
+        stars = _classify_difficulty(what)
+        rows.append((stars, _difficulty_eta(stars), p.get("title", "") or "-", what))
+
+    if not rows:
+        return f"{head}\n\n(실험 후보 없음)"
+
+    # ⭐ → ⭐⭐⭐ 오름차순 (문자열 길이로 정렬)
+    rows.sort(key=lambda r: len(r[0]))
+
+    lines = [
+        head,
+        "",
+        "| 난이도 | ETA | 제목 | 해볼 것 |",
+        "|---|---|---|---|",
+    ]
+    for stars, eta, title, what in rows:
+        safe_what = what.replace("|", "\\|").replace("\n", " ")
+        safe_title = title.replace("|", "\\|")
+        lines.append(f"| {stars} | {eta} | {safe_title} | {safe_what} |")
+    return "\n".join(lines)
+
+
+def _render_wiki_changes() -> str:
+    return "## 🧭 이번 주 위키 변화\n\n(변화 없음)"
 
 
 def _build_user_for_date(

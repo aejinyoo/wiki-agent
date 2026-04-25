@@ -28,9 +28,9 @@
 
 ### brief-llm-decoupling
 - 파일: `docs/features/brief-llm-decoupling.md`
-- 상태: Step 2 완료 (2/7)
+- 상태: Step 3 완료 (3/7)
 - 업데이트: 2026-04-25
-- 다음: Step 3 — 마크다운 조립 헬퍼 (`agents/daily_brief.py`)
+- 다음: Step 4+5 (프롬프트 압축 + 메인 흐름 리팩터링) — 한 커밋으로 묶어 nightly 호환성 유지
 
 ## 다음 예정 (착수 전)
 
