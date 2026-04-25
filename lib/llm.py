@@ -124,6 +124,31 @@ def _generate(
     usage = getattr(resp, "usage_metadata", None)
     input_tokens = int(getattr(usage, "prompt_token_count", 0) or 0) if usage else 0
     output_tokens = int(getattr(usage, "candidates_token_count", 0) or 0) if usage else 0
+    thoughts_tokens = getattr(usage, "thoughts_token_count", None) if usage else None
+
+    candidates = getattr(resp, "candidates", None) or []
+    finish_reason = getattr(candidates[0], "finish_reason", None) if candidates else None
+    finish_reason_name = getattr(finish_reason, "name", None) or (
+        str(finish_reason) if finish_reason is not None else None
+    )
+
+    log.info(
+        "llm.generate model=%s prompt_tokens=%d candidates_tokens=%d thoughts_tokens=%s finish_reason=%s",
+        model,
+        input_tokens,
+        output_tokens,
+        thoughts_tokens if thoughts_tokens is not None else "n/a",
+        finish_reason_name or "n/a",
+    )
+    if finish_reason_name and finish_reason_name != "STOP":
+        log.warning(
+            "llm.generate non-STOP finish_reason=%s model=%s (output_tokens=%d, thoughts_tokens=%s)",
+            finish_reason_name,
+            model,
+            output_tokens,
+            thoughts_tokens if thoughts_tokens is not None else "n/a",
+        )
+
     return text, input_tokens, output_tokens
 
 

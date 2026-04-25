@@ -22,9 +22,15 @@
 
 ### brief-prompt-improvements
 - 파일: `docs/features/brief-prompt-improvements.md`
-- 상태: 구현 완료 · 검증 대기
-- 업데이트: 2026-04-23
-- 다음: 로컬에서 `--dry-run --force` 프리뷰 확인 → 내일 07:30 KST 결과 검증
+- 상태: 사고 발생 · 후속 작업으로 이관 (`brief-llm-decoupling`)
+- 업데이트: 2026-04-25
+- 비고: 4/24 brief partial 잘림 + 4/25 빈 응답. root cause = thinking budget 압박. 정량 룰을 코드로 옮겨 해결 예정
+
+### brief-llm-decoupling
+- 파일: `docs/features/brief-llm-decoupling.md`
+- 상태: Step 1 완료 (1/7)
+- 업데이트: 2026-04-25
+- 다음: Step 2 — 점수·필터·다양성 헬퍼 (`agents/daily_brief.py`)
 
 ## 다음 예정 (착수 전)
 
