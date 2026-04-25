@@ -328,7 +328,7 @@ cd /Users/aejin/wiki-agent && uv run pytest tests/ -v
 - 2026-04-25: Step 2 완료 (`fce2a75`) — `agents/daily_brief.py` 에 `_filter_recent`, `_score`, `_pick_highlights` 3개 헬퍼 추가 (spec 은 "4개" 라 적혀 있으나 명시 시그니처 3개에 맞춤). `_score` = `confidence` 기본 0.5, 비정상 값도 0.5 로 안전 fallback. `_pick_highlights` 는 mutate 없이 필터+점수 정렬+"3개 모두 동일 카테고리" 만 차순위 교체. 스모크 — `x×3, y, z` 에서 top3 [a,c,d] 원형 유지; `x×3, y` 에서 [a,b,d] 로 y 끌어올림. pytest 111 통과.
 
 - [x] Step 1: 진단 로깅
-- 2026-04-25: Step 3 완료 (이 커밋) — `agents/daily_brief.py` 에 렌더 헬퍼 6종 + `_WEEKDAY_KO` 상수 추가. `_classify_difficulty` 는 hard 키워드 우선→easy 키워드/60자 미만→기본 ⭐⭐ 순서로 휴리스틱 판정. `_render_highlights`/`_render_experiments`/`_render_wiki_changes` 모두 섹션 헤더 자체 포함 (Step 5 에서 `\n\n.join` 으로 합칠 예정). 테이블 셀 내 `|`·개행 escape 처리. 빈 입력/빈 필드에도 KeyError 없이 placeholder 로 fallback. pytest 111 통과.
+- 2026-04-25: Step 3 완료 (`a7b0f00`) — `agents/daily_brief.py` 에 렌더 헬퍼 6종 + `_WEEKDAY_KO` 상수 추가. `_classify_difficulty` 는 hard 키워드 우선→easy 키워드/60자 미만→기본 ⭐⭐ 순서로 휴리스틱 판정. `_render_highlights`/`_render_experiments`/`_render_wiki_changes` 모두 섹션 헤더 자체 포함 (Step 5 에서 `\n\n.join` 으로 합칠 예정). 테이블 셀 내 `|`·개행 escape 처리. 빈 입력/빈 필드에도 KeyError 없이 placeholder 로 fallback. pytest 111 통과.
 - [x] Step 2: 점수·필터·다양성 헬퍼
 - [x] Step 3: 마크다운 조립 헬퍼
 - [ ] Step 4: 시스템 프롬프트 압축
