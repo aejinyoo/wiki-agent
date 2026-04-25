@@ -28,9 +28,9 @@
 
 ### brief-llm-decoupling
 - 파일: `docs/features/brief-llm-decoupling.md`
-- 상태: Step 3 완료 (3/7)
+- 상태: Step 5 완료 (5/7)
 - 업데이트: 2026-04-25
-- 다음: Step 4+5 (프롬프트 압축 + 메인 흐름 리팩터링) — 한 커밋으로 묶어 nightly 호환성 유지
+- 다음: Step 6 — 유닛 테스트 추가 (`tests/test_daily_brief_decoupled.py`)
 
 ## 다음 예정 (착수 전)
 

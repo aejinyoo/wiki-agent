@@ -261,61 +261,35 @@ def _render_wiki_changes() -> str:
     return "## 🧭 이번 주 위키 변화\n\n(변화 없음)"
 
 
-def _build_user_for_date(
-    target: dt.date,
-    items: list[dict],
-    personal_context: str,
-    recent_highlights: list[dict] | None = None,
+def _recent_highlight_urls(target: dt.date, days: int = 7) -> set[str]:
+    """최근 `days` 일 브리프 📌 하이라이트의 URL 집합 (재추천 방지용)."""
+    return {
+        h["url"]
+        for h in _recent_brief_highlights(target, days=days)
+        if h.get("url")
+    }
+
+
+def _build_summary_user(
+    target: dt.date, picks: list[dict], personal_context: str
 ) -> str:
+    """🔥 3줄 전용 user 프롬프트. 선별 끝난 picks 만 넘김."""
     lines = [
         f"오늘 날짜: {target.isoformat()}",
         "",
         "[개인화 컨텍스트]",
         personal_context,
         "",
-        "[최근 7일 추천 내역 — 재추천 금지]",
+        "[어제 수집 핵심 아이템]",
     ]
-    if not recent_highlights:
+    if not picks:
         lines.append("(없음)")
     else:
-        # 카테고리 분포 요약 (다양성 가드 근거)
-        cat_counts: dict[str, int] = {}
-        for h in recent_highlights:
-            c = h.get("category") or "-"
-            cat_counts[c] = cat_counts.get(c, 0) + 1
-        dist = ", ".join(f"{c}×{n}" for c, n in sorted(cat_counts.items(), key=lambda x: -x[1]))
-        lines.append(f"카테고리 분포: {dist}")
-        lines.append("")
-        for h in recent_highlights:
-            lines.append(
-                f"- [{h['date']}] ({h.get('category') or '-'}) {h['title']} — {h['url']}"
-            )
-
-    lines.extend([
-        "",
-        "[어제~그제 수집 아이템]",
-    ])
-    if not items:
-        lines.append("(없음)")
-    else:
-        for i, it in enumerate(items, 1):
-            lines.extend([
-                f"{i}. {it['title']}",
-                f"   - 카테고리: {it['category']}",
-                f"   - 태그: {', '.join(it['tags'])}",
-                f"   - 요약: {it['summary'][:400]}",
-                f"   - 왜 중요: {it['why_it_matters'][:200]}",
-                f"   - 해볼 것: {it['what_to_try'][:200]}",
-                f"   - URL: {it['url']}",
-                "",
-            ])
-
-    lines.extend([
-        "",
-        "위 데이터를 바탕으로 프롬프트의 템플릿 형식에 맞춰 브리프를 생성하세요.",
-        "[최근 7일 추천 내역]에 있는 URL은 하이라이트/실험 어디에도 다시 등장시키지 말고,",
-        "카테고리 분포가 한쪽으로 쏠려 있다면 오늘 하이라이트 3개는 서로 다른 카테고리로 다양화하세요.",
-    ])
+        for i, p in enumerate(picks, 1):
+            lines.append(f"{i}. {p.get('title', '')}")
+            summary = (p.get("summary") or "").strip()[:200]
+            if summary:
+                lines.append(f"   - {summary}")
     return "\n".join(lines)
 
 
@@ -332,27 +306,34 @@ MAX_CATCHUP_DAYS = 0  # 소급 비활성화 (오늘치만 생성)
 
 
 def _generate_one(target: dt.date, dry_run: bool, force: bool) -> bool:
-    """target 날짜의 브리프 1개 생성. 이미 있으면 skip(또는 force)."""
+    """target 날짜의 브리프 1개 생성. 이미 있으면 skip(또는 force).
+
+    LLM(Sonnet) 은 🔥 3줄만 호출. 📌/🧪/🧭 는 Python 으로 조립해 부분 실패에도 살아남음.
+    """
     out_path = paths.DAILY_DIR / f"{target.isoformat()}.md"
     if out_path.exists() and not force:
         log.info("스킵 (이미 존재): %s", out_path.name)
         return False
 
     items = _items_for(target)
-    recent = _recent_brief_highlights(target, days=7)
+    recent_urls = _recent_highlight_urls(target, days=7)
+    picks = _pick_highlights(items, recent_urls, top_n=3)
     log.info(
-        "[%s] 어제~그제 아이템 %d건 · 최근 7일 하이라이트 %d건",
-        target.isoformat(), len(items), len(recent),
+        "[%s] items=%d recent=%d picks=%d",
+        target.isoformat(), len(items), len(recent_urls), len(picks),
     )
 
     if dry_run:
+        personal_context = _load_personal_context()
+        preview = _build_summary_user(target, picks, personal_context)
         print(f"\n===== {target.isoformat()} =====")
         print(
             f"[dry-run] Sonnet 호출 스킵 · items={len(items)}건 · "
-            f"recent_highlights={len(recent)}건 · out={out_path.name}"
+            f"recent_urls={len(recent_urls)}건 · picks={len(picks)}건 · out={out_path.name}"
         )
-        # dry-run 시 프롬프트 user 메시지 미리보기 (검증용)
-        preview = _build_user_for_date(target, items, _load_personal_context(), recent)
+        print("----- picks preview -----")
+        for i, p in enumerate(picks, 1):
+            print(f"  {i}. [{p.get('category', '-')}] {p.get('title', '')} — {p.get('url', '')}")
         print("----- user prompt preview -----")
         print(preview[:2000])
         print("----- end preview -----")
@@ -360,29 +341,35 @@ def _generate_one(target: dt.date, dry_run: bool, force: bool) -> bool:
 
     personal_context = _load_personal_context()
     system = _load_prompt()
-    user = _build_user_for_date(target, items, personal_context, recent)
+    user = _build_summary_user(target, picks, personal_context)
 
+    three_lines = ""
     try:
-        result = claude.call_sonnet(system=system, user=user, max_tokens=3500)
-        content = result.text.strip()
+        result = claude.call_sonnet(system=system, user=user, max_tokens=600)
+        three_lines = result.text.strip()
     except claude.TokenCapExceeded as e:
         log.warning("토큰 캡: %s", e)
-        content = _fallback_brief_for(target, f"토큰 캡 — {e}")
-    except Exception as e:  # noqa: BLE001
-        log.exception("브리프 생성 실패")
-        content = _fallback_brief_for(target, str(e))
+        three_lines = f"- (오늘의 3줄 생성 실패: 토큰 캡 — {e})"
+    except Exception:  # noqa: BLE001
+        log.exception("3줄 생성 실패")
+        three_lines = "- (오늘의 3줄 생성 실패)"
 
-    if not content:
-        # LLM 이 예외 없이 빈 응답을 돌려주는 케이스 방어 (2026-04-24 빈 파일 사건).
-        # TokenCapExceeded 와 동일하게 fallback 으로 치환 — 빈 파일이 덮어쓰는 것보다
-        # 명시적 실패 문구가 디버깅·사용자 인지에 유리.
+    if not three_lines:
         log.warning(
-            "LLM 빈 응답 — fallback 치환 target=%s items=%d user_prompt_len=%d",
-            target.isoformat(), len(items), len(user),
+            "LLM 빈 응답 — 3줄 fallback target=%s items=%d picks=%d user_prompt_len=%d",
+            target.isoformat(), len(items), len(picks), len(user),
         )
-        content = _fallback_brief_for(target, "LLM empty response")
+        three_lines = "- (오늘의 3줄 생성 실패: LLM empty response)"
 
-    out_path.write_text(content + "\n", encoding="utf-8")
+    brief = "\n\n".join([
+        _render_header(target),
+        "## 🔥 오늘의 3줄\n" + three_lines,
+        _render_highlights(picks),
+        _render_experiments(picks),
+        _render_wiki_changes(),
+    ]) + "\n"
+
+    out_path.write_text(brief, encoding="utf-8")
     log.info("브리프 저장: %s", out_path)
     return True
 
