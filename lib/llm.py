@@ -109,16 +109,28 @@ def _generate(
     user: str,
     max_tokens: int,
     temperature: float,
+    thinking_budget: int | None = None,
 ) -> tuple[str, int, int]:
-    """공통 호출 경로. (text, input_tokens, output_tokens) 반환."""
+    """공통 호출 경로. (text, input_tokens, output_tokens) 반환.
+
+    `thinking_budget` 가 지정되면 Gemini 의 thinking 토큰 상한을 명시적으로 둠.
+    `max_output_tokens` 안에 thinking + visible 이 함께 잡히기 때문에 짧은
+    출력 작업에서 thinking 이 폭주해 visible=0 이 되는 사고를 막는 데 유용함.
+    """
+    config_kwargs: dict = {
+        "system_instruction": system,
+        "max_output_tokens": max_tokens,
+        "temperature": temperature,
+    }
+    if thinking_budget is not None:
+        config_kwargs["thinking_config"] = genai_types.ThinkingConfig(
+            thinking_budget=thinking_budget
+        )
+
     resp = _client().models.generate_content(
         model=model,
         contents=user,
-        config=genai_types.GenerateContentConfig(
-            system_instruction=system,
-            max_output_tokens=max_tokens,
-            temperature=temperature,
-        ),
+        config=genai_types.GenerateContentConfig(**config_kwargs),
     )
     text = (resp.text or "").strip()
     usage = getattr(resp, "usage_metadata", None)
@@ -187,6 +199,7 @@ def call_sonnet(
     user: str,
     max_tokens: int = 4096,
     temperature: float = 0.3,
+    thinking_budget: int | None = None,
 ) -> LLMResult:
     """긴 글쓰기·큐레이션용 모델 (Daily Brief / Curator). 기본값: gemini-2.5-pro."""
     _check_cap("sonnet", paths.DAILY_TOKEN_CAP_SONNET)
@@ -196,6 +209,7 @@ def call_sonnet(
         user=user,
         max_tokens=max_tokens,
         temperature=temperature,
+        thinking_budget=thinking_budget,
     )
     _record_usage("sonnet", input_tokens, output_tokens)
     return LLMResult(

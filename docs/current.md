@@ -28,9 +28,9 @@
 
 ### brief-llm-decoupling
 - 파일: `docs/features/brief-llm-decoupling.md`
-- 상태: Step 6 완료 (6/7)
+- 상태: 구현 완료 (7/7) · nightly 검증 대기
 - 업데이트: 2026-04-25
-- 다음: Step 7 — dry-run 로그 수집 + 실제 LLM 호출 1회 검증 (사용자 승인 필요)
+- 다음: 2026-04-26 07:30 KST nightly 결과 확인 — 4섹션 정상 + finish_reason=STOP
 
 ## 다음 예정 (착수 전)
 

@@ -345,7 +345,10 @@ def _generate_one(target: dt.date, dry_run: bool, force: bool) -> bool:
 
     three_lines = ""
     try:
-        result = claude.call_sonnet(system=system, user=user, max_tokens=600)
+        # 3줄 출력 작업이라 thinking 은 짧게 강제 (4/25 사고: thinking 1197 토큰으로 폭주).
+        result = claude.call_sonnet(
+            system=system, user=user, max_tokens=1200, thinking_budget=512
+        )
         three_lines = result.text.strip()
     except claude.TokenCapExceeded as e:
         log.warning("토큰 캡: %s", e)
