@@ -324,7 +324,7 @@ cd /Users/aejin/wiki-agent && uv run pytest tests/ -v
 
 ## 진행
 
-- 2026-04-25: Step 1 완료 — `lib/llm.py::_generate` 에 usage + finish_reason INFO 로깅, non-STOP 시 WARNING 추가. 기존 `call_haiku`/`call_sonnet` 시그니처 변경 없음. 전체 pytest 111 통과. 검증 호출에서 root cause 재현됨: `max_tokens=100` 호출 시 `thoughts_tokens=97, candidates_tokens=0, finish_reason=MAX_TOKENS` → 4/24 brief 절단 메커니즘 그대로 확인. 커밋 해시: (이 커밋)
+- 2026-04-25: Step 1 완료 (`e2d668c`) — `lib/llm.py::_generate` 에 usage + finish_reason INFO 로깅, non-STOP 시 WARNING 추가. 기존 `call_haiku`/`call_sonnet` 시그니처 변경 없음. 전체 pytest 111 통과. 검증 호출에서 root cause 재현됨: `max_tokens=100` 호출 시 `thoughts_tokens=97, candidates_tokens=0, finish_reason=MAX_TOKENS` → 4/24 brief 절단 메커니즘 그대로 확인.
 
 - [x] Step 1: 진단 로깅
 - [ ] Step 2: 점수·필터·다양성 헬퍼
