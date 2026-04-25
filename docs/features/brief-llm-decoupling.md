@@ -336,7 +336,7 @@ cd /Users/aejin/wiki-agent && uv run pytest tests/ -v
 - 2026-04-25: Step 6 완료 (`0f8f2c9`) — `tests/test_daily_brief_decoupled.py` 신규 8 테스트 (pick_highlights 3 · classify_difficulty 2 · render 2 · generate_one empty LLM 1). pytest 119 통과 (신규 8 + 기존 111). `test_empty_llm_response_keeps_other_sections` 가 Step 5 의 부분 실패 내성(🔥 fallback + 📌/🧪/🧭 정상 출력) 을 직접 검증.
 
 - [x] Step 5: 메인 흐름 리팩터링
-- 2026-04-25: Step 7 완료 (이 커밋) — dry-run 정상(items=9, picks=3, recent_urls=10), user 프롬프트 preview 1751B. **실호출 1차 (`max_tokens=1200`) 실패**: `thoughts_tokens=1197, candidates_tokens=0, finish_reason=MAX_TOKENS` — Step 1 진단 로깅이 즉시 root cause 포착 (간소화된 프롬프트인데도 Gemini 2.5 Pro thinking 폭주). 대응: `lib/llm.py` 에 `thinking_budget` kwarg 추가 (None=기본). daily_brief 에서 `thinking_budget=512` 명시. **실호출 2차 성공** (`6a71f33` + 후속 커밋): `prompt=486, candidates=77, thoughts=321, finish_reason=STOP`. 결과 `wiki/daily/2026-04-25.md` 4섹션 모두 정상 출력 (헤더+요일, 🔥 3줄 60자 이내, 📌 카드 3건 카테고리·소스·태그, 🧪 ⭐~⭐⭐ 정렬 테이블, 🧭 변화 없음).
+- 2026-04-25: Step 7 완료 (`15f7f7b`) — dry-run 정상(items=9, picks=3, recent_urls=10), user 프롬프트 preview 1751B. **실호출 1차 (`max_tokens=1200`) 실패**: `thoughts_tokens=1197, candidates_tokens=0, finish_reason=MAX_TOKENS` — Step 1 진단 로깅이 즉시 root cause 포착 (간소화된 프롬프트인데도 Gemini 2.5 Pro thinking 폭주). 대응: `lib/llm.py` 에 `thinking_budget` kwarg 추가 (None=기본). daily_brief 에서 `thinking_budget=512` 명시. **실호출 2차 성공** (`6a71f33` + 후속 커밋): `prompt=486, candidates=77, thoughts=321, finish_reason=STOP`. 결과 `wiki/daily/2026-04-25.md` 4섹션 모두 정상 출력 (헤더+요일, 🔥 3줄 60자 이내, 📌 카드 3건 카테고리·소스·태그, 🧪 ⭐~⭐⭐ 정렬 테이블, 🧭 변화 없음).
 - 2026-04-25: 발견 — Gemini 2.5 Pro 는 단순 출력 작업에서도 thinking 이 폭주할 수 있음. Plan 6 spec 의 `max_tokens=600` 가정은 thinking 0 일 때만 유효. `thinking_budget` 으로 명시적 캡이 필수.
 
 - [x] Step 6: 테스트
