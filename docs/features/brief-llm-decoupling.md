@@ -333,8 +333,10 @@ cd /Users/aejin/wiki-agent && uv run pytest tests/ -v
 - [x] Step 2: 점수·필터·다양성 헬퍼
 - [x] Step 3: 마크다운 조립 헬퍼
 - [x] Step 4: 시스템 프롬프트 압축
+- 2026-04-25: Step 6 완료 (이 커밋) — `tests/test_daily_brief_decoupled.py` 신규 8 테스트 (pick_highlights 3 · classify_difficulty 2 · render 2 · generate_one empty LLM 1). pytest 119 통과 (신규 8 + 기존 111). `test_empty_llm_response_keeps_other_sections` 가 Step 5 의 부분 실패 내성(🔥 fallback + 📌/🧪/🧭 정상 출력) 을 직접 검증.
+
 - [x] Step 5: 메인 흐름 리팩터링
-- [ ] Step 6: 테스트
+- [x] Step 6: 테스트
 - [ ] Step 7: dry-run + 실제 검증
 
 ## 다음

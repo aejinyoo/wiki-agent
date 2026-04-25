@@ -28,9 +28,9 @@
 
 ### brief-llm-decoupling
 - 파일: `docs/features/brief-llm-decoupling.md`
-- 상태: Step 5 완료 (5/7)
+- 상태: Step 6 완료 (6/7)
 - 업데이트: 2026-04-25
-- 다음: Step 6 — 유닛 테스트 추가 (`tests/test_daily_brief_decoupled.py`)
+- 다음: Step 7 — dry-run 로그 수집 + 실제 LLM 호출 1회 검증 (사용자 승인 필요)
 
 ## 다음 예정 (착수 전)
 
