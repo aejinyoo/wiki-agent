@@ -10,6 +10,18 @@ SNS 공유 링크(X, Instagram, YouTube) 본문을 채널별 어댑터로 안정
 
 ## 진행
 
+### 2026-04-27 — oEmbed 차단 검증 워크플로 추가
+- 2026-04-27 nightly 에서 YouTube `Pd-2F2gZoH8` fail. yt_dlp 는 "Sign in to confirm
+  you're not a bot", youtube-transcript-api 는 RequestBlocked. 둘 다 GH Actions
+  러너 IP 차단(클라우드 provider) 추정. oEmbed 폴백을 검토하기 전에 oEmbed 가
+  같은 IP 에서 통하는지 먼저 검증 필요 (둘 다 차단되면 폴백 무의미).
+- `.github/workflows/probe-youtube.yml` 신설 — workflow_dispatch 만, schedule 없음.
+  단일 Python step 에서 차단 영상(`Pd-2F2gZoH8`) + control(`dQw4w9WgXcQ`) 각각에
+  대해 (1) oEmbed `https://www.youtube.com/oembed?...` urllib 호출 (2) yt-dlp 메타
+  (3) youtube-transcript-api `list()` 호출 → SUMMARY 매트릭스 출력. 검증 끝나면
+  사용자 승인 후 별도 PR 로 제거 예정.
+- nightly.yml 은 미변경 (회귀 위험 차단).
+
 ### 2026-04-24 — transient 실패 → 영구 오염 방지 (Task A~E)
 **배경**: 2026-04-23 YouTube 영상 1건(`pnJOd5H5Zsc`, 실제로는 포토샵 보정 강좌)이
 수집 시점에 빈 payload 로 저장되어 classifier 가 "AI 기반 개인화된 학습 경험 디자인"
