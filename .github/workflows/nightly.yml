@@ -29,6 +29,7 @@ jobs:
 
     env:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
       WIKI_REPO_TOKEN: ${{ secrets.WIKI_REPO_TOKEN }}
       GITHUB_WIKI_REPO: ${{ vars.GITHUB_WIKI_REPO || 'aejinyoo/wiki' }}
       INBOX_LABEL: ${{ vars.INBOX_LABEL || 'inbox' }}
