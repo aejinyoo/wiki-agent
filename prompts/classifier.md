@@ -50,6 +50,23 @@ URL 외에 `TITLE`, 본문, `USER_CAPTION` 이 **모두 비어 있거나 오직 
 개인화 컨텍스트(관심사·취향)에 맞춰 환각으로 채우지 마세요. 이 케이스는 fetcher
 transient 실패로 payload 가 비었을 가능성이 높아 서버 측에서 별도 처리됩니다.
 
+# 본문이 비어 있을 때 (degraded fetch)
+
+`TITLE` 은 있지만 본문이 비어 있는 경우 — fetcher 가 oEmbed/메타-only 폴백으로
+저장한 케이스입니다 (자막/본문은 anti-bot 차단). 위 "빈 입력 방어"는 적용하지
+말고, **TITLE / SOURCE / USER_CAPTION 만으로 best-effort 분류**를 시도하세요:
+
+- 카테고리·태그·요약은 제목 키워드 + 채널/소스 + USER_CAPTION 에서 유추.
+- 정보가 부족해 카테고리를 단정하기 어려우면 `category: "trend-reports"` 기본값.
+- `confidence: 0.3` 이하 (정보가 제목뿐인 만큼 낮은 신뢰도가 정직).
+- `summary_3lines` / `key_takeaways` / `body_ko` 는 제목·캡션 수준에서 도출 가능한
+  것만 짧게. 본문이 없으니 추측·환각 금지 — 모르면 `""` 또는 빈 배열.
+- `what_to_try` 는 "원본 영상 시청" 류의 trivial 액션을 권하지 말고, 캡션·제목에
+  실질적 트라이 단서가 없으면 `""` 로 비울 것.
+
+이 분기는 빈 입력 거부와 충돌하지 않습니다 — TITLE 이 있으면 best-effort, TITLE
+까지 비면 거부.
+
 # 본문 노이즈 무시 (SNS/OCR)
 
 본문에 IG/X/Threads UI 텍스트나 OCR 잔해가 섞여 있을 수 있습니다. 아래는
