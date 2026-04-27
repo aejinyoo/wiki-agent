@@ -21,9 +21,13 @@ Transient 실패 방어:
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 
 from .base import FetchResult
 
@@ -31,6 +35,9 @@ log = logging.getLogger(__name__)
 
 # transient 재시도: 1회만 — YouTube rate-limit 을 자극하지 않기 위해 얕게.
 _RETRY_BACKOFF_SEC = 0.75
+
+# 폴백 HTTP 호출 타임아웃
+_FALLBACK_TIMEOUT_SEC = 10
 
 _VIDEO_ID_PATTERNS = [
     re.compile(
@@ -90,6 +97,51 @@ def _fetch_metadata(url: str) -> tuple[dict, str | None]:
     combined = f"{err} | retry: {err2}"
     log.warning("yt_dlp metadata 재시도도 실패 url=%s err=%s", url, combined)
     return {}, combined
+
+
+def _pick_thumbnail(thumbnails: dict) -> str:
+    """Data API thumbnails dict 에서 high → medium → default 순 URL 선택."""
+    for size in ("high", "medium", "default"):
+        info = thumbnails.get(size) or {}
+        url = info.get("url")
+        if url:
+            return url
+    return ""
+
+
+def _fetch_data_api(video_id: str, api_key: str) -> dict | None:
+    """YouTube Data API v3 videos.list 단발 호출. 실패 시 None.
+
+    반환 dict: {title, description, channel, thumbnail}.
+    """
+    qs = urllib.parse.urlencode({"part": "snippet", "id": video_id, "key": api_key})
+    url = f"https://www.googleapis.com/youtube/v3/videos?{qs}"
+    req = urllib.request.Request(url)
+    try:
+        with urllib.request.urlopen(req, timeout=_FALLBACK_TIMEOUT_SEC) as resp:
+            body = resp.read()
+    except urllib.error.HTTPError as e:
+        log.warning("Data API HTTP %s video_id=%s — fallback skip", e.code, video_id)
+        return None
+    except (urllib.error.URLError, TimeoutError) as e:
+        log.warning("Data API 네트워크 실패 video_id=%s err=%s", video_id, e)
+        return None
+    try:
+        data = json.loads(body.decode("utf-8", errors="replace"))
+    except (ValueError, UnicodeDecodeError) as e:
+        log.warning("Data API JSON 파싱 실패 video_id=%s err=%s", video_id, e)
+        return None
+    items = data.get("items") or []
+    if not items:
+        log.warning("Data API items 비어있음 video_id=%s — 비공개/삭제 추정", video_id)
+        return None
+    snippet = items[0].get("snippet") or {}
+    return {
+        "title": snippet.get("title") or "",
+        "description": (snippet.get("description") or "")[:20000],
+        "channel": snippet.get("channelTitle") or "",
+        "thumbnail": _pick_thumbnail(snippet.get("thumbnails") or {}),
+    }
 
 
 def _group_snippets_by_60s(fetched) -> str:
