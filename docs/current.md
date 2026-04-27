@@ -68,3 +68,5 @@
 예시:
 - 2026-04-15: <기능명> — archive로 이동
 -->
+
+- 2026-04-27: experiment-table-mobile — wiki-site `🧪 실험` 테이블 모바일 카드 리스트화 (`docs/features/experiment-table-mobile.md`)
