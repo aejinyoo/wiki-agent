@@ -1,20 +1,44 @@
 """YouTube fetcher 단위 테스트.
 
-네트워크 의존성 없음 — video_id 추출과 60초 청크 로직, 재시도·강등 분기까지
-monkey-patch 로 검증한다. 실제 fetch() 통합 테스트는 라이브 URL 필요 →
-별도 스모크로 수동 실행.
+네트워크 의존성 없음 — video_id 추출과 60초 청크 로직, 재시도·강등 분기,
+yt_dlp → Data API → oEmbed 폴백 chain 까지 monkey-patch 로 검증한다.
 """
 
 from __future__ import annotations
 
+import io
+import json
 import os
 import unittest
+import urllib.error
 from unittest.mock import patch
 
 os.environ.setdefault("WIKI_REPO_PATH", "/tmp/wiki-agent-youtube-tests")
 
 from lib.fetchers import youtube as yt_mod  # noqa: E402
-from lib.fetchers.youtube import _extract_video_id, _group_snippets_by_60s  # noqa: E402
+from lib.fetchers.youtube import (  # noqa: E402
+    _extract_video_id,
+    _fetch_data_api,
+    _fetch_oembed,
+    _group_snippets_by_60s,
+)
+
+
+class _MockResp:
+    """urllib.request.urlopen context-manager + read() 모방."""
+
+    def __init__(self, body: bytes, status: int = 200) -> None:
+        self._body = body
+        self.status = status
+
+    def __enter__(self) -> "_MockResp":
+        return self
+
+    def __exit__(self, *args) -> bool:
+        return False
+
+    def read(self) -> bytes:
+        return self._body
 
 
 class TestVideoIdExtraction(unittest.TestCase):
@@ -163,6 +187,7 @@ class TestTransientRetryAndDegrade(unittest.TestCase):
         "description": "desc",
         "channel": "c",
         "duration": 60,
+        "thumbnail": "https://i.ytimg.com/vi/abcdefghijk/hqdefault.jpg",
     }
 
     def setUp(self) -> None:
@@ -194,6 +219,8 @@ class TestTransientRetryAndDegrade(unittest.TestCase):
         self.assertEqual(result.status, "ok")
         self.assertEqual(result.title, "Test Title")
         self.assertEqual(result.text, "hello world")
+        # yt_dlp 자체 재시도 성공 → 폴백 chain 진입 안 함 → degraded 마커 없음
+        self.assertNotIn("fetch_degraded", result.metadata)
 
     def test_transcript_transient_succeeds_on_retry(self) -> None:
         """자막 1차 실패(transient) → 2차 성공이면 최종 ok."""
@@ -214,9 +241,15 @@ class TestTransientRetryAndDegrade(unittest.TestCase):
         self.assertEqual(result.status, "ok")
         self.assertEqual(result.text, "transcript text")
         self.assertEqual(result.metadata["language"], "ko")
+        self.assertNotIn("fetch_degraded", result.metadata)
 
-    def test_transcript_transient_fails_twice_downgrades_to_failed(self) -> None:
-        """메타는 성공이라도 자막이 transient 로 2회 연속 실패하면 failed 강등."""
+    def test_transcript_transient_with_meta_downgrades_to_no_transcript(self) -> None:
+        """메타 ok + 자막 transient 2회 실패 → no_transcript + fetch_degraded.
+
+        2026-04-27 정책 전환: 종전 status=failed 였으나, oEmbed/Data API 폴백
+        도입 이후엔 메타가 채워진 상태에선 best-effort 분류로 보내고 degraded
+        마커로 신호한다. text 는 description 폴백.
+        """
         def bad_transcript(video_id):
             return None, "list() 실패: ConnectionError: boom"
 
@@ -225,10 +258,12 @@ class TestTransientRetryAndDegrade(unittest.TestCase):
              patch.object(yt_mod, "_fetch_transcript_once", side_effect=bad_transcript):
             result = yt_mod.fetch(self._YT_URL)
 
-        self.assertEqual(result.status, "failed")
-        self.assertIn("transient", result.error)
-        # description 을 폴백으로 쓰지 않음 (transient 를 no_transcript 로 저장 금지)
-        self.assertEqual(result.text, "")
+        self.assertEqual(result.status, "no_transcript")
+        self.assertEqual(result.title, "Test Title")
+        self.assertEqual(result.text, "desc")
+        self.assertTrue(result.metadata.get("fetch_degraded"))
+        self.assertEqual(result.metadata.get("fetch_degraded_reason"), "transcript_blocked")
+        self.assertFalse(result.metadata["has_transcript"])
 
     def test_empty_meta_and_no_transcript_downgrades_to_failed(self) -> None:
         """메타도 실패하고 자막도 실제로 없으면 failed (4/23 오염 사건 재현 차단)."""
@@ -238,8 +273,11 @@ class TestTransientRetryAndDegrade(unittest.TestCase):
         def no_transcript(video_id):
             return None, "no_transcript"
 
-        with patch.object(yt_mod, "_fetch_metadata_once", side_effect=empty_meta), \
-             patch.object(yt_mod, "_fetch_transcript_once", side_effect=no_transcript):
+        # 폴백 chain 도 모두 실패시켜 진짜 빈 payload 만들기 (Data API 키 없음 + oEmbed 실패)
+        with patch.dict(os.environ, {"YOUTUBE_API_KEY": ""}, clear=False), \
+             patch.object(yt_mod, "_fetch_metadata_once", side_effect=empty_meta), \
+             patch.object(yt_mod, "_fetch_transcript_once", side_effect=no_transcript), \
+             patch.object(yt_mod, "_fetch_oembed", return_value=None):
             result = yt_mod.fetch(self._YT_URL)
 
         self.assertEqual(result.status, "failed")
@@ -249,7 +287,10 @@ class TestTransientRetryAndDegrade(unittest.TestCase):
         self.assertEqual(result.text, "")
 
     def test_no_transcript_with_meta_keeps_no_transcript_status(self) -> None:
-        """자막 진짜 없음 + 메타 있음 = description 폴백 + no_transcript 유지."""
+        """자막 진짜 없음 + 메타 있음 = description 폴백 + no_transcript 유지.
+
+        yt_dlp 가 정상이면 폴백 chain 진입 X → fetch_degraded 키 없음.
+        """
         def no_transcript(video_id):
             return None, "no_transcript"
 
@@ -262,6 +303,234 @@ class TestTransientRetryAndDegrade(unittest.TestCase):
         self.assertEqual(result.title, "Test Title")
         self.assertEqual(result.text, "desc")
         self.assertFalse(result.metadata["has_transcript"])
+        self.assertNotIn("fetch_degraded", result.metadata)
+
+
+class TestFallbackChain(unittest.TestCase):
+    """yt_dlp 차단 시 Data API → oEmbed 폴백 chain (2026-04-27 도입)."""
+
+    _YT_URL = "https://www.youtube.com/watch?v=abcdefghijk"
+    _DATA_API_META = {
+        "title": "DataAPI Title",
+        "description": "DataAPI Description",
+        "channel": "DataAPI Channel",
+        "thumbnail": "https://i.ytimg.com/vi/abcdefghijk/hqdefault.jpg",
+    }
+    _OEMBED_META = {
+        "title": "oEmbed Title",
+        "description": "",
+        "channel": "oEmbed Author",
+        "thumbnail": "https://i.ytimg.com/vi/abcdefghijk/hqdefault.jpg",
+    }
+
+    def setUp(self) -> None:
+        self._sleep_patch = patch.object(yt_mod.time, "sleep", lambda *_: None)
+        self._sleep_patch.start()
+
+    def tearDown(self) -> None:
+        self._sleep_patch.stop()
+
+    @staticmethod
+    def _yt_dlp_blocked(_url):
+        return {}, "DownloadError: Sign in to confirm you're not a bot"
+
+    @staticmethod
+    def _no_transcript(_vid):
+        return None, "list() 실패: RequestBlocked: cloud IP"
+
+    def test_yt_dlp_blocked_data_api_ok_transcript_blocked(self) -> None:
+        """yt_dlp 차단 + Data API 성공 + 자막 차단 → no_transcript + degraded(2 reasons)."""
+        with patch.dict(os.environ, {"YOUTUBE_API_KEY": "k"}, clear=False), \
+             patch.object(yt_mod, "_fetch_metadata_once", side_effect=self._yt_dlp_blocked), \
+             patch.object(yt_mod, "_fetch_data_api", return_value=self._DATA_API_META), \
+             patch.object(yt_mod, "_fetch_oembed", return_value=None), \
+             patch.object(yt_mod, "_fetch_transcript_once", side_effect=self._no_transcript):
+            result = yt_mod.fetch(self._YT_URL)
+
+        self.assertEqual(result.status, "no_transcript")
+        self.assertEqual(result.title, "DataAPI Title")
+        self.assertEqual(result.text, "DataAPI Description")
+        self.assertEqual(result.metadata["thumbnail"], self._DATA_API_META["thumbnail"])
+        self.assertTrue(result.metadata["fetch_degraded"])
+        reason = result.metadata["fetch_degraded_reason"]
+        self.assertIn("data_api_used", reason)
+        self.assertIn("transcript_blocked", reason)
+
+    def test_yt_dlp_blocked_data_api_ok_transcript_ok(self) -> None:
+        """yt_dlp 차단 + Data API 성공 + 자막 정상 → ok + degraded(chain only)."""
+        def good_transcript(_vid):
+            return (("transcript body", "en"), None)
+
+        with patch.dict(os.environ, {"YOUTUBE_API_KEY": "k"}, clear=False), \
+             patch.object(yt_mod, "_fetch_metadata_once", side_effect=self._yt_dlp_blocked), \
+             patch.object(yt_mod, "_fetch_data_api", return_value=self._DATA_API_META), \
+             patch.object(yt_mod, "_fetch_oembed", return_value=None), \
+             patch.object(yt_mod, "_fetch_transcript_once", side_effect=good_transcript):
+            result = yt_mod.fetch(self._YT_URL)
+
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.title, "DataAPI Title")
+        self.assertEqual(result.text, "transcript body")
+        self.assertTrue(result.metadata["has_transcript"])
+        self.assertTrue(result.metadata["fetch_degraded"])
+        self.assertEqual(
+            result.metadata["fetch_degraded_reason"],
+            "yt_dlp_blocked_data_api_used",
+        )
+
+    def test_yt_dlp_blocked_data_api_failed_oembed_ok_transcript_blocked(self) -> None:
+        """yt_dlp 차단 + Data API 실패 + oEmbed 성공 + 자막 차단 → no_transcript, text=""."""
+        with patch.dict(os.environ, {"YOUTUBE_API_KEY": "k"}, clear=False), \
+             patch.object(yt_mod, "_fetch_metadata_once", side_effect=self._yt_dlp_blocked), \
+             patch.object(yt_mod, "_fetch_data_api", return_value=None), \
+             patch.object(yt_mod, "_fetch_oembed", return_value=self._OEMBED_META), \
+             patch.object(yt_mod, "_fetch_transcript_once", side_effect=self._no_transcript):
+            result = yt_mod.fetch(self._YT_URL)
+
+        self.assertEqual(result.status, "no_transcript")
+        self.assertEqual(result.title, "oEmbed Title")
+        # oEmbed 는 description 못 줌 → text 빈 문자열. classifier degraded 분기로 분류.
+        self.assertEqual(result.text, "")
+        self.assertEqual(result.metadata["channel"], "oEmbed Author")
+        self.assertTrue(result.metadata["fetch_degraded"])
+        reason = result.metadata["fetch_degraded_reason"]
+        self.assertIn("oembed_used", reason)
+        self.assertIn("transcript_blocked", reason)
+
+    def test_yt_dlp_blocked_all_fallbacks_failed(self) -> None:
+        """yt_dlp 차단 + Data API 실패 + oEmbed 실패 → failed."""
+        with patch.dict(os.environ, {"YOUTUBE_API_KEY": "k"}, clear=False), \
+             patch.object(yt_mod, "_fetch_metadata_once", side_effect=self._yt_dlp_blocked), \
+             patch.object(yt_mod, "_fetch_data_api", return_value=None), \
+             patch.object(yt_mod, "_fetch_oembed", return_value=None), \
+             patch.object(yt_mod, "_fetch_transcript_once", side_effect=self._no_transcript):
+            result = yt_mod.fetch(self._YT_URL)
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.title, "")
+        self.assertEqual(result.text, "")
+
+    def test_no_api_key_skips_data_api_uses_oembed(self) -> None:
+        """YOUTUBE_API_KEY 없음 + yt_dlp 차단 + oEmbed 성공 → Data API 호출 안 됨, oEmbed 폴백."""
+        data_api_calls = {"n": 0}
+
+        def spy_data_api(_vid, _key):
+            data_api_calls["n"] += 1
+            return self._DATA_API_META
+
+        env = dict(os.environ)
+        env.pop("YOUTUBE_API_KEY", None)
+
+        with patch.dict(os.environ, env, clear=True), \
+             patch.object(yt_mod, "_fetch_metadata_once", side_effect=self._yt_dlp_blocked), \
+             patch.object(yt_mod, "_fetch_data_api", side_effect=spy_data_api), \
+             patch.object(yt_mod, "_fetch_oembed", return_value=self._OEMBED_META), \
+             patch.object(yt_mod, "_fetch_transcript_once", side_effect=self._no_transcript):
+            result = yt_mod.fetch(self._YT_URL)
+
+        self.assertEqual(data_api_calls["n"], 0)  # API 키 없으니 호출 0회
+        self.assertEqual(result.status, "no_transcript")
+        self.assertEqual(result.title, "oEmbed Title")
+        self.assertIn("oembed_used", result.metadata["fetch_degraded_reason"])
+
+    def test_yt_dlp_ok_skips_fallback_chain(self) -> None:
+        """yt_dlp 성공 시 Data API / oEmbed 호출 안 됨 (회귀 방지)."""
+        meta_ok = {
+            "title": "yt_dlp Title",
+            "description": "yt_dlp Desc",
+            "channel": "ytc",
+            "duration": 30,
+            "thumbnail": "https://i.ytimg.com/vi/abcdefghijk/hqdefault.jpg",
+        }
+        data_api_calls = {"n": 0}
+        oembed_calls = {"n": 0}
+
+        def spy_data_api(*_a, **_kw):
+            data_api_calls["n"] += 1
+            return None
+
+        def spy_oembed(*_a, **_kw):
+            oembed_calls["n"] += 1
+            return None
+
+        def good_transcript(_vid):
+            return (("transcript", "ko"), None)
+
+        with patch.dict(os.environ, {"YOUTUBE_API_KEY": "k"}, clear=False), \
+             patch.object(yt_mod, "_fetch_metadata_once", return_value=(meta_ok, None)), \
+             patch.object(yt_mod, "_fetch_data_api", side_effect=spy_data_api), \
+             patch.object(yt_mod, "_fetch_oembed", side_effect=spy_oembed), \
+             patch.object(yt_mod, "_fetch_transcript_once", side_effect=good_transcript):
+            result = yt_mod.fetch(self._YT_URL)
+
+        self.assertEqual(data_api_calls["n"], 0)
+        self.assertEqual(oembed_calls["n"], 0)
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.title, "yt_dlp Title")
+        self.assertNotIn("fetch_degraded", result.metadata)
+
+
+class TestFetchHelpers(unittest.TestCase):
+    """_fetch_data_api / _fetch_oembed urllib 단위 테스트."""
+
+    def test_data_api_returns_dict_on_200(self) -> None:
+        body = json.dumps({
+            "items": [{
+                "snippet": {
+                    "title": "T",
+                    "description": "D",
+                    "channelTitle": "C",
+                    "thumbnails": {
+                        "default": {"url": "low.jpg"},
+                        "medium": {"url": "med.jpg"},
+                        "high": {"url": "high.jpg"},
+                    },
+                }
+            }]
+        }).encode("utf-8")
+
+        with patch("urllib.request.urlopen", return_value=_MockResp(body)):
+            result = _fetch_data_api("vid123", "key")
+
+        self.assertEqual(result, {
+            "title": "T",
+            "description": "D",
+            "channel": "C",
+            "thumbnail": "high.jpg",
+        })
+
+    def test_data_api_returns_none_on_4xx(self) -> None:
+        err = urllib.error.HTTPError(
+            "https://x", 403, "forbidden", {}, io.BytesIO(b"quota exceeded"),
+        )
+        with patch("urllib.request.urlopen", side_effect=err):
+            self.assertIsNone(_fetch_data_api("vid123", "key"))
+
+    def test_data_api_returns_none_on_empty_items(self) -> None:
+        body = json.dumps({"items": []}).encode("utf-8")
+        with patch("urllib.request.urlopen", return_value=_MockResp(body)):
+            self.assertIsNone(_fetch_data_api("vid123", "key"))
+
+    def test_oembed_returns_dict_on_200(self) -> None:
+        body = json.dumps({
+            "title": "Hello",
+            "author_name": "Author",
+            "thumbnail_url": "https://i.ytimg.com/x.jpg",
+        }).encode("utf-8")
+
+        with patch("urllib.request.urlopen", return_value=_MockResp(body)):
+            result = _fetch_oembed("https://www.youtube.com/watch?v=vid123")
+
+        self.assertEqual(result, {
+            "title": "Hello",
+            "description": "",
+            "channel": "Author",
+            "thumbnail": "https://i.ytimg.com/x.jpg",
+        })
+
+    def test_oembed_returns_none_on_timeout(self) -> None:
+        with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("timeout")):
+            self.assertIsNone(_fetch_oembed("https://www.youtube.com/watch?v=vid123"))
 
 
 if __name__ == "__main__":
