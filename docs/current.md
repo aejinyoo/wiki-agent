@@ -16,9 +16,9 @@
 
 ### sns-fetchers
 - 파일: `docs/features/sns-fetchers.md`
-- 상태: 구현 완료 · 검증 대기 (+ 2026-04-24 transient 방어 Task A~E 반영)
-- 업데이트: 2026-04-24
-- 다음: 실 YouTube URL 로 ingester→transcript_cleanup→classifier 한 바퀴 통합 스모크 (raw JSON 에 text/text_cleaned/cleaned 쌓이는지, classifier 가 정제본 소비하는지) → Shortcut OCR 전환 후 user_caption 실데이터 검증. 오염된 `pnJOd5H5Zsc` 영상은 사용자 재공유 시 자동 재수집됨
+- 상태: 구현 완료 · nightly 검증 대기 (2026-04-27 YouTube Data API + oEmbed 폴백 chain 추가)
+- 업데이트: 2026-04-27
+- 다음: 4/28 07:30 KST nightly 결과 확인 — 차단 영상 (`Pd-2F2gZoH8` 등) 이 폴백 chain 으로 통과해 classifier degraded 분기로 분류되는지 검증. 그 후 통합 스모크 (transcript_cleanup) + Shortcut OCR.
 
 ### brief-prompt-improvements
 - 파일: `docs/features/brief-prompt-improvements.md`

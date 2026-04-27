@@ -10,17 +10,53 @@ SNS 공유 링크(X, Instagram, YouTube) 본문을 채널별 어댑터로 안정
 
 ## 진행
 
-### 2026-04-27 — oEmbed 차단 검증 워크플로 추가
-- 2026-04-27 nightly 에서 YouTube `Pd-2F2gZoH8` fail. yt_dlp 는 "Sign in to confirm
-  you're not a bot", youtube-transcript-api 는 RequestBlocked. 둘 다 GH Actions
-  러너 IP 차단(클라우드 provider) 추정. oEmbed 폴백을 검토하기 전에 oEmbed 가
-  같은 IP 에서 통하는지 먼저 검증 필요 (둘 다 차단되면 폴백 무의미).
-- `.github/workflows/probe-youtube.yml` 신설 — workflow_dispatch 만, schedule 없음.
-  단일 Python step 에서 차단 영상(`Pd-2F2gZoH8`) + control(`dQw4w9WgXcQ`) 각각에
-  대해 (1) oEmbed `https://www.youtube.com/oembed?...` urllib 호출 (2) yt-dlp 메타
-  (3) youtube-transcript-api `list()` 호출 → SUMMARY 매트릭스 출력. 검증 끝나면
-  사용자 승인 후 별도 PR 로 제거 예정.
-- nightly.yml 은 미변경 (회귀 위험 차단).
+### 2026-04-27 — YouTube Data API v3 + oEmbed 폴백 chain (영상별 anti-bot 차단 방어)
+
+**배경**: 2026-04-27 nightly 에서 `Pd-2F2gZoH8` fail. yt_dlp = "Sign in to
+confirm you're not a bot", youtube-transcript-api = `RequestBlocked` (cloud
+IP). control 영상(`dQw4w9WgXcQ`) 은 셋 다 통과 → 광역 IP 차단 아니라 (영상 ×
+엔드포인트) 조합 이슈. probe 워크플로(아래 같은 날) 매트릭스:
+
+| 호출 | `Pd-2F2gZoH8` | `dQw4w9WgXcQ` |
+|---|---|---|
+| oEmbed | ✅ HTTP 200 | ✅ HTTP 200 |
+| yt_dlp | ❌ Sign in to confirm | ✅ |
+| transcript-api | ❌ RequestBlocked | ✅ |
+
+oEmbed 가 같은 IP·같은 영상에서 통과 → 폴백 1순위로 안정. 단 oEmbed 는
+title/author/thumbnail 만 줘서 description 빈 채로 classifier 입력 → 보강용
+**YouTube Data API v3** (`videos.list?part=snippet`) 도 도입. 무료 tier 10k
+units/day, videos.list = 1 unit/call.
+
+**변경**:
+- `lib/fetchers/youtube.py` — `_fetch_data_api(video_id, api_key)`,
+  `_fetch_oembed(url)` 신설 (urllib 만, 의존성 추가 0). `fetch()` 폴백 chain
+  재편: yt_dlp 1차+재시도 → 실패 시 Data API (키 있을 때만, 단발) → 실패 시
+  oEmbed (단발) → 셋 다 실패 시 `status=failed`. base_metadata 에 `thumbnail`
+  통일 필드, 폴백 진입 시 `fetch_degraded=True` + `fetch_degraded_reason`
+  ("yt_dlp_blocked_data_api_used" / "yt_dlp_blocked_oembed_used" /
+  "transcript_blocked", 복수 시 `, ` join).
+- **정책 전환**: 자막 transient 실패 시 종전 `status=failed` → 메타가 채워진
+  케이스 한정 `no_transcript + fetch_degraded=True (reason="transcript_blocked")`.
+  title 만으로도 classifier best-effort 분류 가능. 메타까지 비면 여전히 failed
+  (4/24 빈 payload 환각 가드 유지).
+- `prompts/classifier.md` "본문이 비어 있을 때 (degraded fetch)" 섹션 추가 —
+  TITLE/USER_CAPTION 만으로 best-effort, `confidence ≤ 0.3`, 카테고리 단정
+  어려우면 `trend-reports` 기본값. 기존 "빈 입력 방어(분류 거부)" 와 충돌
+  없음 (거부 = TITLE 까지 빈 경우만).
+- `.github/workflows/nightly.yml` env 에 `YOUTUBE_API_KEY` 추가. probe
+  워크플로(`probe-youtube.yml`) 검증 완료 → 제거.
+- `tests/fetchers/test_youtube.py` 24 → 35 케이스: fallback chain 6 + helper
+  단위 5 (Data API 200/4xx/empty + oEmbed 200/timeout) + 기존 transient 테스트
+  1건 신규 정책으로 갱신 (`test_transcript_transient_with_meta_downgrades_to_no_transcript`).
+- 의존성 추가 0 (urllib + 표준 라이브러리만).
+
+**라이브 검증** (로컬, 차단 시뮬레이션):
+- yt_dlp + transcript 정상: `Pd-2F2gZoH8` → `status=ok`, fetch_degraded 없음.
+- yt_dlp / transcript 모두 mock 으로 차단: `status=no_transcript`, title="5분이면
+  끝! 다이어트 토스트!", text 2010 chars (Data API description), thumbnail OK,
+  reason="yt_dlp_blocked_data_api_used, transcript_blocked".
+- 전체 단위 89/89 통과.
 
 ### 2026-04-24 — transient 실패 → 영구 오염 방지 (Task A~E)
 **배경**: 2026-04-23 YouTube 영상 1건(`pnJOd5H5Zsc`, 실제로는 포토샵 보정 강좌)이
@@ -126,11 +162,37 @@ SNS 공유 링크(X, Instagram, YouTube) 본문을 채널별 어댑터로 안정
 ## 다음
 - [ ] **Shortcut 변경(사용자)**: IG URL 공유 직전 캡션 영역 스크린샷 → Shortcut 이 "최근 사진 1장" → OCR → 이슈 body 에 동봉. iOS IG 앱은 캡션 직접 복사 불가 (2026-04-23 결정 참고)
 - [ ] **Task 2 + Task 5 통합 스모크**: 실 YouTube URL 로 파이프라인 한 바퀴 — `ingester → transcript_cleanup → classifier` 순서로 raw JSON 에 `text`/`text_cleaned`/`cleaned` 필드가 제대로 쌓이는지, classifier 가 `text_cleaned` 를 소비하는지 확인 (2026-04-24 기준: 오염 영상 재수집 필요 — 사용자가 같은 URL 다시 공유하면 자동 처리됨)
+- [ ] **2026-04-28 nightly 검증**: 폴백 chain 도입 후 실 차단 케이스에서 degraded 영상이 분류 정상 흐름으로 들어가는지 확인. classifier degraded 분기 첫 실 데이터 확인.
 - [x] **Task 5** transcript_cleanup 에이전트 (2026-04-23)
 - [x] **Task 6** ingester status 기반 분기 (2026-04-23)
 - [x] **Task A~E** transient 실패 → 영구 오염 방지 다층 방어 (2026-04-24)
+- [x] **YouTube Data API + oEmbed 폴백 chain** (2026-04-27)
 
 ## 결정
+
+### 2026-04-27: YouTube 메타 폴백 chain (yt_dlp → Data API → oEmbed) + transient 자막 차단은 no_transcript+degraded 강등
+- **영상별 차단 vs IP 광역 차단**: 4/27 probe 결과 같은 GH Actions 러너에서도 영상마다
+  yt_dlp/transcript-api 차단 여부가 갈렸다. 광역 차단이 아니므로 fetcher 자체를
+  포기하지 않고 채널별 폴백을 추가하는 게 맞다.
+- **chain 순서 (yt_dlp → Data API → oEmbed)**:
+  - yt_dlp 가 자막+메타 둘 다 줘서 가장 풍부 → 1순위 유지.
+  - Data API v3 는 description 까지 줘서 classifier 입력이 풍부, 무료 tier 10k/day
+    여유 → 2순위. 키 없으면 skip.
+  - oEmbed 는 description 없지만 anti-bot 우회 가장 강함 (publicly cacheable) →
+    최후 보루.
+  - 셋 다 실패해야 failed. 한 단계라도 메타 채워지면 raw 에 저장해 분류 시도.
+- **자막 transient 차단 정책 전환** (4/24 정책 부분 갱신): 종전엔 자막 transient
+  실패면 메타가 있어도 `failed` 강등이었으나, oEmbed/Data API 폴백 도입으로 메타가
+  채워진 케이스가 많아져 `failed` 로 떨어뜨리면 분류 기회를 통째로 잃는다. 새 정책:
+  메타 있음 + 자막 transient → `no_transcript` + `fetch_degraded=True (reason
+  ="transcript_blocked")` 로 보존. 메타까지 비면 여전히 `failed` (4/24 빈 payload
+  환각 가드 유지).
+- **classifier 양분 (분류 거부 vs degraded best-effort)**: TITLE 까지 비면 거부
+  (환각 방지), TITLE 있고 본문만 비면 best-effort (`confidence ≤ 0.3`). 이 분기
+  덕에 oEmbed-only 케이스도 위키에 들어와 사용자 인지가 가능하다.
+- **fetch_degraded 마커 위치**: status 새로 추가 안 하고 `metadata.fetch_degraded`
+  플래그로 신호. ingester `_SAVE_STATUSES` (`{"ok", "no_transcript"}`) 그대로,
+  status 화이트리스트 분기를 흔들지 않는다. classifier 는 본문 빈 여부로만 분기.
 
 ### 2026-04-24: transient 실패는 로깅+재시도, 빈 payload 는 저장 거부, 오염 raw 는 retry 가능 상태 유지 (Task A~D 원칙)
 - **transient 실패 처리**: fetcher 내부에서만 짧은 backoff 1회 재시도 (YouTube rate-
