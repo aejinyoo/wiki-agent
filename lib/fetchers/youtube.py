@@ -38,6 +38,7 @@ _RETRY_BACKOFF_SEC = 0.75
 
 # 폴백 HTTP 호출 타임아웃
 _FALLBACK_TIMEOUT_SEC = 10
+_OEMBED_USER_AGENT = "wiki-agent oembed"
 
 _VIDEO_ID_PATTERNS = [
     re.compile(
@@ -141,6 +142,37 @@ def _fetch_data_api(video_id: str, api_key: str) -> dict | None:
         "description": (snippet.get("description") or "")[:20000],
         "channel": snippet.get("channelTitle") or "",
         "thumbnail": _pick_thumbnail(snippet.get("thumbnails") or {}),
+    }
+
+
+def _fetch_oembed(url: str) -> dict | None:
+    """YouTube oEmbed 단발 호출. 실패 시 None.
+
+    반환 dict: {title, channel, thumbnail, description=""}. description 은
+    oEmbed 응답에 포함되지 않아 빈 문자열로 채운다 (호출부 일관성).
+    """
+    qs = urllib.parse.urlencode({"url": url, "format": "json"})
+    api_url = f"https://www.youtube.com/oembed?{qs}"
+    req = urllib.request.Request(api_url, headers={"User-Agent": _OEMBED_USER_AGENT})
+    try:
+        with urllib.request.urlopen(req, timeout=_FALLBACK_TIMEOUT_SEC) as resp:
+            body = resp.read()
+    except urllib.error.HTTPError as e:
+        log.warning("oEmbed HTTP %s url=%s — fallback skip", e.code, url)
+        return None
+    except (urllib.error.URLError, TimeoutError) as e:
+        log.warning("oEmbed 네트워크 실패 url=%s err=%s", url, e)
+        return None
+    try:
+        data = json.loads(body.decode("utf-8", errors="replace"))
+    except (ValueError, UnicodeDecodeError) as e:
+        log.warning("oEmbed JSON 파싱 실패 url=%s err=%s", url, e)
+        return None
+    return {
+        "title": data.get("title") or "",
+        "description": "",
+        "channel": data.get("author_name") or "",
+        "thumbnail": data.get("thumbnail_url") or "",
     }
 
 
