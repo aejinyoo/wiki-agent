@@ -1,4 +1,4 @@
-"""YouTube fetcher — 메타(yt_dlp) + 자막(youtube-transcript-api).
+"""YouTube fetcher — 메타(yt_dlp → Data API v3 → oEmbed) + 자막(youtube-transcript-api).
 
 자막 우선순위 (6단계):
     1. ko 수동
@@ -9,20 +9,25 @@
     6. 그 외 언어 자동 생성 (첫 발견)
 
 자막이 있으면 60초 단위 문단으로 묶어 `text` 로 반환하고 `status="ok"`.
-자막이 없으면 yt_dlp description 으로 폴백하고 `status="no_transcript"` —
-ingester 가 저장 루트로 태우되 degraded 플래그는 raw payload 의 fetch_status 에 보존.
-video ID 추출 실패·메타/자막 둘 다 실패한 빈 payload 는 `status="failed"`.
+자막이 없거나 transient 차단이면 `status="no_transcript"` (description 또는 빈 본문).
 
-Transient 실패 방어:
-  - metadata / transcript 각 단계에서 예외는 warning 으로 기록(원인 가시화).
-  - 각 단계는 1회 backoff 재시도 (GitHub Actions 러너 IP flake / 일시 rate-limit 대비).
-  - 두 번 연속 실패하고 폴백도 없으면 최종 failed 로 강등.
+메타 폴백 chain (yt_dlp 차단 시):
+    1. yt_dlp 1차 + 1회 재시도
+    2. YouTube Data API v3 (YOUTUBE_API_KEY 있을 때만, 단발)
+    3. oEmbed (단발)
+    셋 다 실패 → `status="failed"`. 메타 채워지면 `metadata.fetch_degraded=True`
+    + `fetch_degraded_reason` 로 어디까지 폴백했는지 기록.
+
+자막 transient 차단(RequestBlocked 등) 도 메타가 채워진 경우 `no_transcript +
+fetch_degraded` 로 강등 — title 만으로도 classifier 가 best-effort 분류 가능
+(2026-04-24 빈 payload 환각 가드 + classifier degraded 프롬프트 분기로 보호).
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import time
 import urllib.error
@@ -79,11 +84,12 @@ def _fetch_metadata_once(url: str) -> tuple[dict, str | None]:
         "description": (info.get("description") or "")[:20000],
         "channel": info.get("channel") or "",
         "duration": info.get("duration"),
+        "thumbnail": info.get("thumbnail") or "",
     }, None
 
 
 def _fetch_metadata(url: str) -> tuple[dict, str | None]:
-    """yt_dlp 로 제목·채널·설명·duration 추출. 1회 재시도.
+    """yt_dlp 로 제목·채널·설명·duration·thumbnail 추출. 1회 재시도.
 
     반환: (meta_dict, error_or_None). 빈 meta 는 `{}` — 호출부에서 빈 dict 로 취급 가능.
     """
@@ -300,7 +306,22 @@ def fetch(url: str) -> FetchResult:
         return FetchResult(status="failed", error=f"video ID 추출 실패: {url}")
 
     meta, meta_err = _fetch_metadata(url)
-    transcript, transcript_err = _fetch_transcript(video_id)
+
+    degraded_reasons: list[str] = []
+
+    # yt_dlp 차단 → Data API → oEmbed 폴백 chain
+    if meta_err is not None:
+        api_key = os.environ.get("YOUTUBE_API_KEY")
+        api_meta = _fetch_data_api(video_id, api_key) if api_key else None
+        if api_meta:
+            meta = api_meta
+            degraded_reasons.append("yt_dlp_blocked_data_api_used")
+        else:
+            oembed_meta = _fetch_oembed(url)
+            if oembed_meta:
+                meta = oembed_meta
+                degraded_reasons.append("yt_dlp_blocked_oembed_used")
+            # 둘 다 실패면 meta 는 빈 dict — 아래 failed 분기에서 처리
 
     title = meta.get("title", "") or ""
     description = meta.get("description", "") or ""
@@ -309,56 +330,61 @@ def fetch(url: str) -> FetchResult:
         "video_id": video_id,
         "channel": meta.get("channel"),
         "duration": meta.get("duration"),
+        "thumbnail": meta.get("thumbnail"),
     }
 
-    # 성공 경로 — 자막이 있으면 여기로
+    transcript, transcript_err = _fetch_transcript(video_id)
+    is_real_no_transcript = transcript_err == "no_transcript"
+    transcript_transient_failed = transcript is None and not is_real_no_transcript
+    if transcript_transient_failed:
+        degraded_reasons.append("transcript_blocked")
+
+    def _attach_degraded(metadata: dict) -> dict:
+        if degraded_reasons:
+            return {
+                **metadata,
+                "fetch_degraded": True,
+                "fetch_degraded_reason": ", ".join(degraded_reasons),
+            }
+        return metadata
+
+    # 자막 성공 — ok 경로
     if transcript is not None:
         plain, language = transcript
         return FetchResult(
             status="ok",
             title=title,
             text=plain,
-            metadata={
-                **base_metadata,
-                "language": language,
-                "has_transcript": True,
-            },
+            metadata=_attach_degraded(
+                {
+                    **base_metadata,
+                    "language": language,
+                    "has_transcript": True,
+                }
+            ),
         )
 
-    # 자막이 없거나 실패. 메타도 없고 자막도 없으면 failed 로 강등 — transient
-    # 장애가 빈 payload 로 저장 루트에 오르는 걸 막는다 (4/23 환각 오염 재현 차단).
-    is_real_no_transcript = transcript_err == "no_transcript"
-    if meta_err is not None and not title and not description:
-        reason_meta = meta_err
+    # 자막 실패. 메타까지 비면 failed 강등 — 4/23 빈 payload 환각 오염 재현 차단.
+    if not title and not description:
+        reason_meta = meta_err or "all fallbacks failed"
         reason_transcript = (
             "no_transcript" if is_real_no_transcript else (transcript_err or "unknown")
         )
         return FetchResult(
             status="failed",
-            error=(
-                f"metadata: {reason_meta}; transcript: {reason_transcript}"
-            ),
+            error=f"metadata: {reason_meta}; transcript: {reason_transcript}",
             metadata=base_metadata,
         )
 
-    # 메타는 있지만 자막이 transient 실패한 케이스도 failed 로 강등.
-    # description 폴백은 자막이 "진짜 없는" (no_transcript) 경우에만 허용한다 —
-    # transient 를 no_transcript 로 저장하면 downstream 이 분류 대상으로 오해.
-    if not is_real_no_transcript:
-        return FetchResult(
-            status="failed",
-            title=title,
-            error=f"transcript transient 실패: {transcript_err or 'unknown'}",
-            metadata=base_metadata,
-        )
-
-    # 여기까지 왔으면 진짜 자막 없음. description 폴백으로 no_transcript 저장.
+    # 메타 있음 → no_transcript 로 저장. transient 차단이면 degraded 마커가 붙음.
     return FetchResult(
         status="no_transcript",
         title=title,
         text=description,
-        metadata={
-            **base_metadata,
-            "has_transcript": False,
-        },
+        metadata=_attach_degraded(
+            {
+                **base_metadata,
+                "has_transcript": False,
+            }
+        ),
     )
