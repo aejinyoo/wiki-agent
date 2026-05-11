@@ -34,9 +34,9 @@
 
 ### curator-v2
 - 파일: `docs/features/curator-v2.md`
-- 상태: 계획 (3개 핵심 결정 확정) · 구현 착수 대기
+- 상태: Phase 1 (태그 정규화) auto-apply 구현 완료 · Phase 2~3 dry-run · nightly 자동 켜기 대기
 - 업데이트: 2026-05-11
-- 다음: T1 `agents/curator.py` 에 LLM 호출·파싱·dry-run 보고서 로직. 병행 가능 작업: T5 (`_meta.yaml` protected 해제) + T6 (force run 으로 첫 dry-run 보고서 받기)
+- 다음: T8 (Phase 1 을 nightly 에서 자동 켜기 — 1주 dry-run 누적 검증 후) · T11 (보고서에 seed_items ID 노출)
 
 ## 다음 예정 (착수 전)
 

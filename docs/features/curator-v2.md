@@ -1,6 +1,6 @@
 # curator-v2
 
-**상태**: 계획 · **업데이트**: 2026-05-11
+**상태**: Phase 1 (태그) 구현 완료 · Phase 2~3 dry-run 만 · **업데이트**: 2026-05-11
 
 ## 요약
 
@@ -27,26 +27,39 @@
 
 ## 진행
 
-(아직 시작 전)
+### 2026-05-11
+- T1 완료: `agents/curator.py` 에 LLM 호출·파싱·dry-run 보고서 작성 로직 (커밋 `f56b5e8`)
+- T4 완료: `tests/test_curator.py` 14건 (커밋 `f56b5e8`), 이후 4+5 = 9건 추가
+- T5 완료: `_meta.yaml` 의 `protected: [trend-reports]` 해제 (wiki 커밋 `c26dbdc`)
+- T6 완료: 첫 dry-run + protected 해제 후 재실행. lifestyle-recipe seed 2→6 확장 확인 (wiki 커밋 `c26dbdc`)
+- **Phase 3 수동 적용**: dry-run 보고서 따라 24개 아이템 이동 (lifestyle-recipe 19 / ai-ux-patterns 5 통합). wiki 커밋 `652fc47`, classifier 커밋 `93da287`, wiki-site `0fb1dee`.
+- **T2 (new_categories 가드레일 보완)**: seed_items 가 protected 카테고리에서 온 경우 필터링 + 최소 seed 5건 검사 (커밋 `e4cd83e`)
+- **Phase 1 (태그) auto-apply 구현**: `_apply_tag_renames()` + `--apply-tags` CLI flag + 보고서 렌더 갱신. tests 5건 추가.
 
 ## 다음
 
-- [ ] **T1** `agents/curator.py` 에 LLM 호출·파싱·dry-run 보고서 작성 로직 추가
+- [x] **T1** `agents/curator.py` 에 LLM 호출·파싱·dry-run 보고서 작성 로직 추가
   - `_build_user_prompt()` — 카테고리별 아이템 수 / 전체 태그 빈도 / 최근 추가분 샘플 / protected / 가드레일 패킹
   - `_call_curator_llm()` — `lib/llm.call_sonnet` 호출, 시스템 프롬프트는 `prompts/curator.md`
   - `_parse_proposal()` — JSON 한 덩어리 추출 + 스키마 검증 (방어적: code fence·앞뒤 텍스트 제거)
   - `_evaluate_proposal()` — 가드레일 적용: 영향 >100 → `approval_required` 로 이동, protected 카테고리 포함 시 제거, cooldown 검사
   - `_write_dry_run_report()` — `_changelog/YYYY-MM-DD.md` 에 사람이 읽을 수 있는 마크다운 (제안·승인 필요·스킵 사유 섹션)
-- [ ] **T2** `_personal_context.md` 재생성은 dry-run 에도 그대로 (v1 동작 유지)
-- [ ] **T3** `_curator_state.json` (또는 `_changelog/` 파일 파싱) 으로 카테고리별 마지막 변경일 추적 → cooldown
-- [ ] **T4** `tests/test_curator.py`
-  - 영향 >100 제안이 `approval_required` 로 이동되는지
-  - protected 카테고리 (`_meta.yaml` 기반) 가 모든 액션에서 제거되는지
-  - 잡음 섞인 LLM 응답 (```json ... ``` fence, 앞뒤 텍스트) 에서 JSON 추출
-  - 가짜 위키로 통합 (mocked `call_sonnet`)
-- [ ] **T5** wiki 레포 `_meta.yaml` 수정: `protected: []` (별도 커밋)
-- [ ] **T6** nightly 에서 결과 확인 — `--force-curator` 로 강제 실행해서 첫 보고서 받아보고 LLM 제안 품질 평가
-- [ ] **T7** docs/current.md 의 sns-fetchers 끝나는 대로 본 작업 정식 착수 (현재는 sns-fetchers 가 진행 중)
+- [x] **T2** `_personal_context.md` 재생성은 dry-run 에도 그대로
+- [x] **T3** `_changelog/` 파싱으로 카테고리별 마지막 변경일 추적 (`_compute_category_last_change`, `**applied-to**:` 라인 파싱)
+- [x] **T4** `tests/test_curator.py` 23건
+- [x] **T5** wiki 레포 `_meta.yaml` `protected: []`
+- [x] **T6** force run 으로 첫 보고서 받기 + 품질 평가 완료
+- [ ] **T8** Phase 1 auto-apply 를 nightly 에서 켜기 — 1주 dry-run 누적 후 `nightly.py` 에서 `apply_tags=True` 로 호출 (또는 `--apply-curator-tags` CLI). 지금은 코드는 있고 CLI flag 만 제공. 자동 호출은 신뢰 쌓인 후.
+- [ ] **T9** Phase 2 (`reclassifications`) auto-apply — `_apply_reclassifications()` 추가. 파일 이동 + frontmatter category 갱신 + `**applied-to**:` 라인 로그. cooldown 자동 추적.
+- [ ] **T10** Phase 3 (`new_categories` · `category_changes`) auto-apply — 가장 위험. 1~2개월 dry-run 후 검토.
+- [ ] **T11** 보고서 렌더에 `seed_items` 실제 ID 목록 노출 — 현재 count 만 보여서 어떤 아이템이 후보인지 안 보임 (이번 Phase 3 수동 적용 때 직접 ID 찾아야 했음)
+
+## 운영 노트
+
+- **수동 트리거**: `uv run agents/curator.py --force [--apply-tags]`
+- **자동**: 매일 nightly 에서 큐레이터 호출. 7일 cooldown · 50건 이상이면 dry-run 실행 (apply-tags 는 별도 플래그 활성화 필요).
+- **결과 위치**: `_changelog/YYYY-MM-DD.md` (보고서) + `_personal_context.md` (개인화 컨텍스트)
+- **롤백**: Phase 1 적용된 태그 변경은 git revert 로 일괄 되돌리기. 변경 파일은 manifest 에 있음.
 
 ## 구현 노트
 

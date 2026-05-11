@@ -362,15 +362,22 @@ def _evaluate_proposal(
     return out
 
 
-def _render_dry_run_report(evaluated: dict, snapshot: dict, llm_meta: dict) -> str:
+def _render_dry_run_report(evaluated: dict, snapshot: dict, llm_meta: dict, apply_tags: bool = False) -> str:
     today = dt.date.today().isoformat()
     cats_sorted = sorted(snapshot["categories"].items(), key=lambda x: -x[1])
     cats_inline = ", ".join(f"{c}={n}" for c, n in cats_sorted)
 
+    mode_line = (
+        "**모드**: Phase 1 auto-apply (tag_renames 적용 · 나머지 dry-run)"
+        if apply_tags
+        else "**모드**: dry-run (auto-apply 비활성, 제안만 기록)"
+    )
+    title_suffix = "Phase 1 apply" if apply_tags else "dry-run"
+
     lines: list[str] = [
-        f"# Curator dry-run — {today}",
+        f"# Curator {title_suffix} — {today}",
         "",
-        "**모드**: dry-run (auto-apply 비활성, 제안만 기록)",
+        mode_line,
         f"**LLM**: {llm_meta.get('model')} · 입력 {llm_meta.get('input_tokens')}t · 출력 {llm_meta.get('output_tokens')}t",
         f"**위키 스냅샷**: {len(snapshot['items'])}개 아이템 · 카테고리 [{cats_inline}]",
         "",
@@ -378,6 +385,17 @@ def _render_dry_run_report(evaluated: dict, snapshot: dict, llm_meta: dict) -> s
         evaluated.get("summary") or "(없음)",
         "",
     ]
+
+    # apply 모드일 때 실제 적용된 변경을 먼저 노출
+    applied = evaluated.get("_applied_tag_renames") or []
+    if apply_tags:
+        lines.append(f"## ✓ 적용된 태그 변경 ({len(applied)}개 아이템)")
+        if not applied:
+            lines.append("(LLM 제안 0건 또는 영향 0건)")
+        else:
+            for a in applied:
+                lines.append(f"- `{a['id']}`: {a['from_tags']} → {a['to_tags']}")
+        lines.append("")
 
     def emit(title: str, kind: str, fmt) -> None:
         lst = evaluated.get(kind) or []
@@ -388,8 +406,11 @@ def _render_dry_run_report(evaluated: dict, snapshot: dict, llm_meta: dict) -> s
             lines.extend(fmt(ch) for ch in lst)
         lines.append("")
 
+    tag_title = (
+        "태그 정규화 (Phase 1 적용됨)" if apply_tags else "태그 정규화 (Phase 1 — auto-apply 활성 예정)"
+    )
     emit(
-        "태그 정규화 (Phase 1 — auto-apply 활성 예정)",
+        tag_title,
         "tag_renames",
         lambda c: f"- `{c.get('from')}` → `{c.get('to')}` (영향 {c.get('_impact', '?')}건): {c.get('reason', '')}",
     )
@@ -435,6 +456,49 @@ def _render_dry_run_report(evaluated: dict, snapshot: dict, llm_meta: dict) -> s
     return "\n".join(lines) + "\n"
 
 
+def _apply_tag_renames(evaluated: dict) -> list[dict]:
+    """tag_renames 를 위키 파일 frontmatter 에 직접 반영.
+
+    각 위키 .md 를 iter 하며 from 태그를 to 로 교체. 한 아이템에 같은 to 태그가
+    이미 있으면 dedup. 변경 manifest (id, 이전 태그, 새 태그) 반환.
+
+    호출자는 변경 후 rebuild_index / recompute_stats 를 돌려서 _index/_stats
+    파일을 동기화해야 함.
+    """
+    import frontmatter  # 지연 import
+
+    renames = evaluated.get("tag_renames") or []
+    mapping: dict[str, str] = {}
+    for r in renames:
+        src = r.get("from")
+        dst = r.get("to")
+        if src and dst and src != dst:
+            mapping[src] = dst
+    if not mapping:
+        return []
+
+    changes: list[dict] = []
+    for path, post in iter_wiki_items():
+        old_tags = list(post.get("tags") or [])
+        new_tags: list[str] = []
+        seen: set[str] = set()
+        for t in old_tags:
+            new_t = mapping.get(t, t)
+            if new_t in seen:
+                continue  # dedup: 동일 to 태그가 이미 있으면 스킵
+            new_tags.append(new_t)
+            seen.add(new_t)
+        if new_tags != old_tags:
+            post["tags"] = new_tags
+            path.write_text(frontmatter.dumps(post), encoding="utf-8")
+            changes.append({
+                "id": post.get("id") or path.stem,
+                "from_tags": old_tags,
+                "to_tags": new_tags,
+            })
+    return changes
+
+
 def _write_dry_run_report(text: str) -> paths.Path:
     today = dt.date.today().isoformat()
     out = paths.CHANGELOG_DIR / f"{today}.md"
@@ -454,7 +518,7 @@ def is_due(force: bool = False) -> bool:
     return (dt.date.today() - last).days >= MIN_DAYS_BETWEEN_RUNS
 
 
-def run(force: bool = False) -> None:
+def run(force: bool = False, apply_tags: bool = False) -> None:
     meta = load_meta()
     protected = set(meta.get("protected") or [])
     log.info("protected 카테고리: %s", sorted(protected))
@@ -471,7 +535,9 @@ def run(force: bool = False) -> None:
     # v1 동작: 통계 + 개인화 컨텍스트 (LLM 실패해도 유지)
     _regenerate_personal_context()
 
-    # v2 dry-run: LLM 제안 → _changelog/YYYY-MM-DD.md 보고서
+    # v2: LLM 제안 → _changelog/YYYY-MM-DD.md 보고서
+    # apply_tags=True 면 tag_renames 만 실제 파일에 반영 (Phase 1).
+    # 나머지 phase (재분류·카테고리 변경) 는 여전히 dry-run.
     try:
         from lib import llm  # 지연 import (테스트에서 mock 용이)
 
@@ -494,22 +560,38 @@ def run(force: bool = False) -> None:
             "input_tokens": result.input_tokens,
             "output_tokens": result.output_tokens,
         }
-        report = _render_dry_run_report(evaluated, snapshot, llm_meta)
+
+        applied_tags: list[dict] = []
+        if apply_tags:
+            applied_tags = _apply_tag_renames(evaluated)
+            log.info("Phase 1 (tag renames) 적용: %d 아이템 변경", len(applied_tags))
+            if applied_tags:
+                # _index.json / _stats.json 동기화
+                from agents import rebuild_index  # noqa: WPS433
+                rebuild_index.rebuild_index_full()
+                recompute_stats()
+                log.info("_index.json / _stats.json 재생성 완료")
+            evaluated["_applied_tag_renames"] = applied_tags
+
+        report = _render_dry_run_report(evaluated, snapshot, llm_meta, apply_tags=apply_tags)
         out = _write_dry_run_report(report)
-        log.info("Curator dry-run 보고서 작성: %s", out)
+        log.info("Curator 보고서 작성: %s", out)
     except Exception:  # noqa: BLE001
-        log.exception("Curator v2 dry-run 실패 — fallback 마커만 작성")
-        _mark_run_today(note="v2 dry-run 실패. v1 stats + personal_context 만 갱신됨. 로그 확인 필요.")
+        log.exception("Curator v2 실패 — fallback 마커만 작성")
+        _mark_run_today(note="v2 실패. v1 stats + personal_context 만 갱신됨. 로그 확인 필요.")
         return
 
-    log.info("v2 dry-run 완료. auto-apply 활성화는 별도 PR (curator-v2 docs T 참조).")
+    mode = "Phase 1 apply" if apply_tags else "dry-run"
+    log.info("Curator %s 완료.", mode)
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--force", action="store_true", help="50건 미만이어도 강제 실행")
+    ap.add_argument("--apply-tags", action="store_true",
+                    help="Phase 1: tag_renames 를 실제 파일에 적용. 기본 off (dry-run).")
     args = ap.parse_args()
-    run(force=args.force)
+    run(force=args.force, apply_tags=args.apply_tags)
 
 
 if __name__ == "__main__":

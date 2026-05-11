@@ -291,6 +291,86 @@ class TestComputeCategoryLastChange(_CuratorTestBase):
         self.assertEqual(out, {})
 
 
+class TestApplyTagRenames(_CuratorTestBase):
+    """Phase 1 auto-apply: tag_renames 가 실제 frontmatter 에 반영되는지."""
+
+    def _make_wiki_item(self, rel_path: str, tags: list[str], item_id: str = "abc") -> Path:
+        import frontmatter
+        full = self.tmp / rel_path
+        full.parent.mkdir(parents=True, exist_ok=True)
+        post = frontmatter.Post(
+            "본문",
+            **{
+                "id": item_id,
+                "title": "테스트",
+                "category": full.parent.name,
+                "tags": tags,
+                "url": "https://example.com",
+                "captured_at": "2026-05-01T00:00:00Z",
+            },
+        )
+        full.write_text(frontmatter.dumps(post), encoding="utf-8")
+        return full
+
+    def test_renames_applied_to_file(self) -> None:
+        import frontmatter
+        path = self._make_wiki_item(
+            "wiki/generative-tools/2026-05-01-x.md",
+            tags=["stream", "ai"], item_id="aaa",
+        )
+        evaluated = {"tag_renames": [{"from": "stream", "to": "streaming"}]}
+        changes = self.curator._apply_tag_renames(evaluated)
+        self.assertEqual(len(changes), 1)
+        self.assertEqual(changes[0]["from_tags"], ["stream", "ai"])
+        self.assertEqual(changes[0]["to_tags"], ["streaming", "ai"])
+
+        # 실제 파일이 갱신됐는지
+        new_post = frontmatter.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual(list(new_post["tags"]), ["streaming", "ai"])
+
+    def test_dedup_when_target_already_present(self) -> None:
+        """from='x', to='y' 이고 아이템이 ['x', 'y'] 면 ['y'] 로 dedup."""
+        import frontmatter
+        path = self._make_wiki_item(
+            "wiki/generative-tools/2026-05-01-x.md",
+            tags=["x", "y"], item_id="bbb",
+        )
+        evaluated = {"tag_renames": [{"from": "x", "to": "y"}]}
+        changes = self.curator._apply_tag_renames(evaluated)
+        self.assertEqual(len(changes), 1)
+        self.assertEqual(changes[0]["to_tags"], ["y"])
+        new_post = frontmatter.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual(list(new_post["tags"]), ["y"])
+
+    def test_unaffected_files_left_alone(self) -> None:
+        """from 태그를 안 가진 파일은 변경 안 됨."""
+        path = self._make_wiki_item(
+            "wiki/generative-tools/2026-05-01-x.md",
+            tags=["other"], item_id="ccc",
+        )
+        mtime_before = path.stat().st_mtime
+        evaluated = {"tag_renames": [{"from": "missing", "to": "found"}]}
+        changes = self.curator._apply_tag_renames(evaluated)
+        self.assertEqual(changes, [])
+        # 안 건드림
+        self.assertEqual(path.stat().st_mtime, mtime_before)
+
+    def test_no_renames_is_noop(self) -> None:
+        self._make_wiki_item("wiki/x/y.md", tags=["a"])
+        self.assertEqual(self.curator._apply_tag_renames({"tag_renames": []}), [])
+        self.assertEqual(self.curator._apply_tag_renames({}), [])
+
+    def test_identity_rename_ignored(self) -> None:
+        """from == to 는 무시."""
+        path = self._make_wiki_item("wiki/x/y.md", tags=["a"])
+        mtime_before = path.stat().st_mtime
+        changes = self.curator._apply_tag_renames(
+            {"tag_renames": [{"from": "a", "to": "a"}]}
+        )
+        self.assertEqual(changes, [])
+        self.assertEqual(path.stat().st_mtime, mtime_before)
+
+
 class TestRenderDryRunReport(_CuratorTestBase):
     def test_renders_all_sections(self) -> None:
         snapshot = {
