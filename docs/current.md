@@ -32,6 +32,12 @@
 - 업데이트: 2026-04-25
 - 다음: 2026-04-26 07:30 KST nightly 결과 확인 — 4섹션 정상 + finish_reason=STOP
 
+### curator-v2
+- 파일: `docs/features/curator-v2.md`
+- 상태: 계획 (3개 핵심 결정 확정) · 구현 착수 대기
+- 업데이트: 2026-05-11
+- 다음: T1 `agents/curator.py` 에 LLM 호출·파싱·dry-run 보고서 로직. 병행 가능 작업: T5 (`_meta.yaml` protected 해제) + T6 (force run 으로 첫 dry-run 보고서 받기)
+
 ## 다음 예정 (착수 전)
 
 > sns-fetchers 마무리 후 아래 순서대로. 각 항목 상세는 feature 문서 참조.
@@ -69,4 +75,7 @@
 - 2026-04-15: <기능명> — archive로 이동
 -->
 
+- 2026-04-27: daily-pagination — `/daily` 페이지네이션 (페이지당 20개, 페이지 2+ 는 `/daily/page/[N]`). 월별 필터는 follow-up 보류. 커밋 `0801cbb`
+- 2026-04-27: category-nav-relocation — 홈 Categories 그리드 제거, Today's Brief 하위 카테고리 칩으로 이전 (`Chip.astro` 재사용). 커밋 `a85f738`
+- 2026-04-27: home-recent-briefs-cap — 홈 "최근 브리프" 최대 10건 cap + "전체 보기 →" 링크. 커밋 `e2f8c4a`
 - 2026-04-27: experiment-table-mobile — wiki-site `🧪 실험` 테이블 모바일 카드 리스트화 (`docs/features/experiment-table-mobile.md`)
