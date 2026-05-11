@@ -31,11 +31,10 @@ log = logging.getLogger("classifier")
 
 CATEGORIES = [
     "ai-ux-patterns",
-    "prompt-ui",
-    "agent-interaction",
     "generative-tools",
     "design-system-automation",
     "trend-reports",
+    "lifestyle-recipe",
 ]
 
 
