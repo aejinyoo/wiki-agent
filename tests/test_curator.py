@@ -181,6 +181,93 @@ class TestEvaluateProposal(_CuratorTestBase):
         self.assertEqual(len(out["reclassifications"]), 1)
 
 
+class TestNewCategoriesProtectedGuard(_CuratorTestBase):
+    def _snapshot(self, items: list[dict]) -> dict:
+        cats: dict[str, int] = {}
+        tags: dict[str, int] = {}
+        for it in items:
+            cats[it["category"]] = cats.get(it["category"], 0) + 1
+            for t in it.get("tags") or []:
+                tags[t] = tags.get(t, 0) + 1
+        return {"items": items, "categories": cats, "tags": tags}
+
+    def test_seeds_in_protected_filtered_skip_if_below_min(self) -> None:
+        """seed 5건 중 4건이 protected 출신 → 살아남는 seed=1 < 5 → skip."""
+        items = [
+            {"id": "p1", "category": "trend-reports", "tags": []},
+            {"id": "p2", "category": "trend-reports", "tags": []},
+            {"id": "p3", "category": "trend-reports", "tags": []},
+            {"id": "p4", "category": "trend-reports", "tags": []},
+            {"id": "ok1", "category": "generative-tools", "tags": []},
+        ]
+        snap = self._snapshot(items)
+        proposal = {
+            "new_categories": [
+                {"name": "food", "seed_items": ["p1", "p2", "p3", "p4", "ok1"], "reason": "..."},
+            ],
+        }
+        out = self.curator._evaluate_proposal(
+            proposal, snap, protected={"trend-reports"}, meta={}, last_change={},
+            today=dt.date(2026, 5, 11),
+        )
+        self.assertEqual(out["new_categories"], [])
+        self.assertEqual(len(out["skipped"]), 1)
+        self.assertIn("protected 출신", out["skipped"][0]["reason"])
+
+    def test_seeds_in_protected_filtered_pass_if_meets_min(self) -> None:
+        """seed 7건 중 2건만 protected 출신 → 살아남는 5건 == 최소 5건 → pass."""
+        items = [
+            {"id": f"ok{i}", "category": "generative-tools", "tags": []} for i in range(5)
+        ] + [
+            {"id": "p1", "category": "trend-reports", "tags": []},
+            {"id": "p2", "category": "trend-reports", "tags": []},
+        ]
+        snap = self._snapshot(items)
+        proposal = {
+            "new_categories": [
+                {"name": "food", "seed_items": ["ok0", "ok1", "ok2", "ok3", "ok4", "p1", "p2"], "reason": "..."},
+            ],
+        }
+        out = self.curator._evaluate_proposal(
+            proposal, snap, protected={"trend-reports"}, meta={}, last_change={},
+            today=dt.date(2026, 5, 11),
+        )
+        self.assertEqual(len(out["new_categories"]), 1)
+        self.assertEqual(out["new_categories"][0]["_seeds_filtered_protected"], ["p1", "p2"])
+        self.assertEqual(out["new_categories"][0]["seed_items"], ["ok0", "ok1", "ok2", "ok3", "ok4"])
+        self.assertEqual(out["new_categories"][0]["_impact"], 5)
+
+    def test_no_protected_seeds_passes_clean(self) -> None:
+        items = [{"id": f"x{i}", "category": "generative-tools", "tags": []} for i in range(6)]
+        snap = self._snapshot(items)
+        proposal = {
+            "new_categories": [
+                {"name": "y", "seed_items": [f"x{i}" for i in range(6)], "reason": "..."},
+            ],
+        }
+        out = self.curator._evaluate_proposal(
+            proposal, snap, protected=set(), meta={}, last_change={},
+            today=dt.date(2026, 5, 11),
+        )
+        self.assertEqual(len(out["new_categories"]), 1)
+        self.assertNotIn("_seeds_filtered_protected", out["new_categories"][0])
+
+    def test_below_min_seeds_skipped_even_without_protected(self) -> None:
+        """seed 가 처음부터 5건 미만이면 (protected 무관) skip."""
+        snap = self._snapshot([{"id": "x", "category": "generative-tools", "tags": []}])
+        proposal = {
+            "new_categories": [
+                {"name": "y", "seed_items": ["x"], "reason": "..."},
+            ],
+        }
+        out = self.curator._evaluate_proposal(
+            proposal, snap, protected=set(), meta={}, last_change={},
+            today=dt.date(2026, 5, 11),
+        )
+        self.assertEqual(out["new_categories"], [])
+        self.assertEqual(len(out["skipped"]), 1)
+
+
 class TestComputeCategoryLastChange(_CuratorTestBase):
     def test_parses_applied_to_lines(self) -> None:
         (self.tmp / "_changelog" / "2026-04-20.md").write_text(

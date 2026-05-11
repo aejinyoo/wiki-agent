@@ -227,6 +227,28 @@ def _affected_categories(kind: str, change: dict) -> set[str]:
     return set()
 
 
+# new_categories 검증: 적용되려면 seed 가 최소 이만큼 (protected 필터 후) 필요.
+# 기획서 5.5 의 "seed 5건 이상" 정책 코드화.
+MIN_SEED_AFTER_FILTER = 5
+
+
+def _split_seeds_by_protection(
+    seed_ids: list[str],
+    snapshot: dict,
+    protected: set[str],
+) -> tuple[list[str], list[str]]:
+    """new_categories.seed_items 를 (살아남는 seed, protected 출신으로 빠진 seed) 로 분리."""
+    id_to_cat = {it["id"]: it.get("category", "") for it in snapshot["items"]}
+    valid: list[str] = []
+    removed: list[str] = []
+    for sid in seed_ids:
+        if id_to_cat.get(sid, "") in protected:
+            removed.append(sid)
+        else:
+            valid.append(sid)
+    return valid, removed
+
+
 def _compute_category_last_change() -> dict[str, dt.date]:
     """_changelog/YYYY-MM-DD.md 들 중 'applied-to: cat1, cat2' 라인 파싱.
 
@@ -279,6 +301,25 @@ def _evaluate_proposal(
 
     for kind in _PROPOSAL_KINDS:
         for ch in proposal.get(kind) or []:
+            # new_categories: seed 중 protected 출신 제거 → 최소 seed 미달이면 skip
+            if kind == "new_categories":
+                seeds = _as_str_list(ch.get("seed_items"))
+                valid, removed = _split_seeds_by_protection(seeds, snapshot, protected)
+                if removed:
+                    ch = {**ch, "seed_items": valid, "_seeds_filtered_protected": removed}
+                if len(valid) < MIN_SEED_AFTER_FILTER:
+                    out["skipped"].append({
+                        "kind": kind,
+                        "change": ch,
+                        "reason": (
+                            f"seed 필터 후 {len(valid)}건 < 최소 {MIN_SEED_AFTER_FILTER}건 "
+                            f"(protected 출신 제거: {removed})"
+                            if removed
+                            else f"seed {len(valid)}건 < 최소 {MIN_SEED_AFTER_FILTER}건"
+                        ),
+                    })
+                    continue
+
             impact = _compute_impact(kind, ch, snapshot)
             enriched = {**ch, "_impact": impact}
             affected = _affected_categories(kind, ch)
