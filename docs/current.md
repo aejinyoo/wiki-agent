@@ -34,10 +34,10 @@
 
 ### keepalive-schedule
 - 파일: `docs/features/keepalive-schedule.md`
-- 상태: 구현 완료 (7/19) · nightly 검증 대기
+- 상태: 구현 완료 · 수동 실행 검증 통과 (7/19)
 - 업데이트: 2026-07-19
-- 비고: WIKI_REPO_TOKEN 만료로 7/11 nightly 중단 → 토큰 만료없음 재발급 + keepalive 스텝 추가 (커밋 `e3af99d`)
-- 다음: 7/20 nightly 후 wiki-agent 에 PAT author 로 `chore: keepalive` 커밋 찍혔는지 확인
+- 비고: WIKI_REPO_TOKEN 만료로 7/11 nightly 중단 → 토큰 만료없음 재발급 + keepalive 스텝 추가 (`e3af99d`). persist-credentials 버그 수정 (`7404afb`). remote 에 keepalive 커밋 `ef7807c` 확인.
+- 다음: 없음 (매일 자동 유지)
 
 ### curator-v2
 - 파일: `docs/features/curator-v2.md`
