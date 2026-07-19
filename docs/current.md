@@ -32,6 +32,13 @@
 - 업데이트: 2026-04-25
 - 다음: 2026-04-26 07:30 KST nightly 결과 확인 — 4섹션 정상 + finish_reason=STOP
 
+### keepalive-schedule
+- 파일: `docs/features/keepalive-schedule.md`
+- 상태: 구현 완료 (7/19) · nightly 검증 대기
+- 업데이트: 2026-07-19
+- 비고: WIKI_REPO_TOKEN 만료로 7/11 nightly 중단 → 토큰 만료없음 재발급 + keepalive 스텝 추가 (커밋 `e3af99d`)
+- 다음: 7/20 nightly 후 wiki-agent 에 PAT author 로 `chore: keepalive` 커밋 찍혔는지 확인
+
 ### curator-v2
 - 파일: `docs/features/curator-v2.md`
 - 상태: Phase 1 (태그 정규화) auto-apply 구현 완료 · Phase 2~3 dry-run · nightly 자동 켜기 대기
