@@ -115,6 +115,25 @@ jobs:
             https://api.github.com/repos/aejinyoo/wiki-site/dispatches \
             -d '{"event_type":"content-updated"}'         
 
+      - name: Keepalive commit (prevent schedule auto-disable)
+        # GH Actions 는 60일간 repo 활동이 없으면 스케줄 워크플로우를 자동 비활성화한다.
+        # nightly 는 wiki repo 에만 커밋하므로, wiki-agent 에 매일 타임스탬프 커밋을 남겨 타이머를 리셋한다.
+        # 반드시 PAT(WIKI_REPO_TOKEN)로 push — 기본 GITHUB_TOKEN 이 만든 커밋은 60일 타이머를 리셋하지 못한다.
+        if: always() && inputs.dry_run != true
+        working-directory: wiki-agent
+        run: |
+          git config user.name "wiki-agent[bot]"
+          git config user.email "wiki-agent@users.noreply.github.com"
+          mkdir -p .keepalive
+          date -u +"%Y-%m-%dT%H:%M:%SZ" > .keepalive/last-run
+          git add .keepalive/last-run
+          if git diff --cached --quiet; then
+            echo "변경 없음 — keepalive 커밋 스킵"
+          else
+            git commit -m "chore: keepalive $(date -u +%Y-%m-%d)"
+            git push "https://x-access-token:${WIKI_REPO_TOKEN}@github.com/aejinyoo/wiki-agent.git" HEAD:main
+          fi
+
       - name: Upload logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
